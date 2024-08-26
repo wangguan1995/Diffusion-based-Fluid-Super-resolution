@@ -80,7 +80,8 @@ Add the model checkpoint file (e.g., ``baseline_ckpt.pth``) from <b>Step 1</b> t
 In the main directory of this repo, run:
 
 ``
-python main.py --config kmflow_re1000_rs256.yml --seed 1234 --sample_step 1 --t 240 --r 30
+python main.py --config cylinder_re3900.yml --seed 1234 --sample_step 1 --t 240 --r 30
+python main.py --config kmflow_re1000_rs256_sparse_recons.yml --seed 1234 --sample_step 1 --t 240 --r 30
 ``
 
 

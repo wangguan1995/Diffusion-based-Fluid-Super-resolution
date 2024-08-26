@@ -219,13 +219,16 @@ def main():
     logging.info("Exp comment = {}".format(args.comment))
 
     try:
-        runner = ConditionalDiffusion(args, config)
-        # runner = Diffusion(args, config)
+        # runner = ConditionalDiffusion(args, config)
+        runner = Diffusion(args, config)
         if args.sample:
+            print("Sampling images...")
             runner.sample()
         elif args.test:
+            print("Testing model...")
             runner.test()
         else:
+            print("Training model...")
             runner.train()
     except Exception:
         logging.error(traceback.format_exc())
@@ -233,5 +236,8 @@ def main():
     return 0
 
 
+
+# python main.py --config kmflow_re1000_rs256.yml --seed 1234 --sample_step 1 --t 240 --r 30
+# python main.py --config cylinder_re3900.yml --exp ./experiments/re3900/ --doc ./weights/re3900/ --ni
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
