@@ -3,7 +3,7 @@ data:
     dataset: "cylinder flow re3900"
     data_dir: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/velocity_high_res.npy"
     sample_data_dir: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/velocity_low_res.npy"
-    stat_path: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/velocity_stat.npz"
+    stat_path: ""
     image_size: 256
     channels: 3
     logit_transform: false
@@ -20,7 +20,6 @@ data:
 
 
 model:
-    name: "Diffusion_Re3900"
     type: "simple"
     in_channels: 3
     out_ch: 3
@@ -33,10 +32,7 @@ model:
     ema_rate: 0.9999
     ema: True
     resamp_with_conv: True
-    # ckpt_path: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/train_ddpm/checkpoint/0826_ckpt_4500.pth"
-    # ckpt_path: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/train_ddpm/checkpoint/0826_16x16_ckpt_10000.pth"
-    # ckpt_path: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/train_ddpm/checkpoint/0826_4x10_ckpt_10000.pth"
-    ckpt_path: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/train_ddpm/checkpoint/0826_4x10_ckpt_20000.pth"
+    ckpt_path: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/train_ddpm/checkpoint/ckpt_100.pth" #这个地方忘记改了，后面实验需要去掉试试
     
 
 diffusion:
@@ -46,14 +42,14 @@ diffusion:
     num_diffusion_timesteps: 1000 # Might need to be changed to 500 later to match SDEdit
 
 training:
-    batch_size: 4
+    batch_size: 32
     n_epochs: 100 # 300 epoch for about 12 hours
     n_iters: 200000
     snapshot_freq: 10000
     validation_freq: 2000
 
 sampling:
-    batch_size: 1 # keep this to be 1, it breaks into [40 sub_graph] from [1 time-step cylinder slice], so real batch size is 40
+    batch_size: 20
     last_only: True
     lambda_: 0.
     dump_arr: True

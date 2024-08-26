@@ -382,6 +382,14 @@ class KMFlowTensorDataset(Dataset):
                  ):
         np.random.seed(1)
         self.all_data = np.load(data_path)
+
+        # 切分图像为4*10的子图像，并拼接
+        sub_matrices = []
+        self.all_data = self.all_data[:, :, 8:-8, :] # 去掉一部分方便整除
+        for row_blocks in np.split(self.all_data, 4, axis=2):   # 2 rows
+            for block in np.split(row_blocks, 10, axis=3):       # 2 cols  
+                sub_matrices.append(block)
+        self.all_data = np.concatenate(sub_matrices, axis=0)
         print('Data set shape: ', self.all_data.shape)
         idxs = np.arange(self.all_data.shape[0])
         num_of_training_seeds = int(train_ratio*len(idxs))
@@ -443,7 +451,7 @@ class KMFlowTensorDataset(Dataset):
             self.cache[id] = frame
 
             if len(self.cache) > self.max_cache_len:
-                self.cache.pop(self.cache.keys()[np.random.choice(len(self.cache.keys()))])
+                self.cache.pop(list(self.cache.keys())[np.random.choice(len(self.cache.keys()))])
             return frame
 
 

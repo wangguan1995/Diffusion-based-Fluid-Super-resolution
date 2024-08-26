@@ -11,6 +11,7 @@ import torch.utils.tensorboard as tb
 import copy
 
 from runners.rs256_guided_diffusion import Diffusion
+from runners.rs256_guided_diffusion_re3900 import Diffusion_Re3900
 
 def parse_args_and_config():
     parser = argparse.ArgumentParser(description=globals()['__doc__'])
@@ -98,7 +99,13 @@ def main():
     print("<" * 80)
 
     try:
-        runner = Diffusion(args, config, logger, log_dir)
+        if hasattr(config.model, 'name'):
+            if config.model.name == 'Diffusion_Re3900':
+                runner = Diffusion_Re3900(args, config, logger, log_dir)
+            else:
+                raise NotImplementedError
+        else:
+            runner = Diffusion(args, config, logger, log_dir)
         runner.reconstruct()
 
     except Exception:

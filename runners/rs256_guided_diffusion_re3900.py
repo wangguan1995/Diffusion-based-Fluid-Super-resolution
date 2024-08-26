@@ -20,10 +20,13 @@ import pickle
 
 from copy import deepcopy
 
-def plot_data(u_2d, u_2d_downsampled):
-    print("u_2d.shape", u_2d.shape)
-    print("u_2d_downsampled.shape", u_2d_downsampled.shape)
 
+
+rows_size = 4
+cols_size = 10
+
+
+def plot_data(u_2d, u_2d_downsampled):
     import matplotlib.pyplot as plt
     import numpy as np
     plt.clf()
@@ -120,9 +123,24 @@ def load_recons_data(ref_path, sample_data_dir, data_kw, smoothing, smoothing_sc
     return flattened_ref_data, flattened_sampled_data, data_mean.item(), data_scale.item()
 
 
+def split_data(all_data): 
+    # all_data [160, 400]
+    sub_matrices = []
+    # [40, 40]
+
+    for row_blocks in np.split(all_data, rows_size, axis=2):
+        for block in np.split(row_blocks, cols_size, axis=3):
+            sub_matrices.append(block)
+    return torch.concat(sub_matrices, dim=0)
+
+
 def load_recons_data_re3900(ref_path, sample_data_dir, data_kw, smoothing, smoothing_scale):
     flattened_ref_data = np.load("/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/velocity_high_res.npy")
     flattened_sampled_data = np.load("/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/velocity_low_res.npy")
+    # [176, 400] -> [160, 400]
+    flattened_ref_data = flattened_ref_data[:, :, 8:-8, :]
+    flattened_sampled_data = flattened_sampled_data[:, :, 8:-8, :]
+
     data_mean, data_scale = np.mean(flattened_ref_data), np.std(flattened_ref_data)
     flattened_ref_data = torch.Tensor(flattened_ref_data)
     flattened_sampled_data = torch.Tensor(flattened_sampled_data)
@@ -223,7 +241,7 @@ def make_image_grid_cylinder(images, out_path, ncols=10, is_reference=False):
     for ax, im_no in zip(grid, np.arange(b*ncols)):
         ax.imshow(images[im_no, :, :], cmap='twilight', vmin=-0.01, vmax=0.05)
         ax.axis('off')
-    plt.savefig(out_path, bbox_inches='tight', dpi=300)
+    plt.savefig(out_path, bbox_inches='tight', dpi=100)
     plt.close()
 
 
@@ -303,7 +321,7 @@ def voriticity_residual(w, re=1000.0, dt=1/32, calc_grad=True):
         return residual_loss
 
 
-class Diffusion(object):
+class Diffusion_Re3900(object):
     def __init__(self, args, config, logger, log_dir, device=None):
         self.args = args
         self.config = config
@@ -363,7 +381,8 @@ class Diffusion(object):
                                                                     self.config.data.data_kw,
                                                                     smoothing=self.config.data.smoothing,
                                                                     smoothing_scale=self.config.data.smoothing_scale)
-
+        print("ref_data.shape", ref_data.shape)
+        print("reblur_dataf_data.shape", blur_data.shape)
         scaler = StdScaler(data_mean, data_std)
         # minmax_scaler = MinMaxScaler(ref_data.min(), ref_data.max())
 
@@ -397,7 +416,7 @@ class Diffusion(object):
             # x0_masked[~mask] = np.nan
 
             # make_image_grid(slice2sequence(x0_masked), path_to_dump)
-            make_image_grid_cylinder(slice2sequence(x0_masked), path_to_dump, is_reference=False)
+            make_image_grid_cylinder(slice2sequence(split_data(x0_masked)), path_to_dump, is_reference=False)
             sample_img_filename = 'reference_image.png'
             path_to_dump = os.path.join(self.image_sample_dir, sample_folder, sample_img_filename)
 
@@ -405,7 +424,7 @@ class Diffusion(object):
             # exit()
 
             # make_image_grid(slice2sequence(gt), path_to_dump)
-            make_image_grid_cylinder(slice2sequence(gt), path_to_dump, is_reference=True)
+            make_image_grid_cylinder(slice2sequence(split_data(gt)), path_to_dump, is_reference=True)
 
             # save as array
             if self.config.sampling.dump_arr:
@@ -441,6 +460,22 @@ class Diffusion(object):
                     # 'residual loss': equation_loss_fn
                 })
 
+            def model_forward(x):
+                x = split_data(x.clone())
+                logger = None
+                if self.config.model.type == 'conditional':
+                    xs, _ = guided_ddim_steps(x, seq, model, betas,
+                                            w=self.config.sampling.guidance_weight,
+                                            dx_func=physical_gradient_func, cache=False, logger=logger)
+                elif self.config.sampling.lambda_ > 0:
+                    xs, _ = ddim_steps(x, seq, model, betas,
+                                    dx_func=physical_gradient_func, cache=False, logger=logger)
+                else:
+                    xs, _ = ddim_steps(x, seq, model, betas, cache=False, logger=logger)
+                xs = torch.cat([xs[-1][i:i+cols_size] for i in range(0, rows_size * cols_size, cols_size)], dim=2) 
+                xs = torch.cat([xs[i:i+1] for i in range(cols_size)], dim=3)
+                return xs
+
             # we repeat the sampling for multiple times
             for repeat in range(self.args.repeat_run):
                 self.log(f'Run No.{repeat}:')
@@ -448,9 +483,14 @@ class Diffusion(object):
                 for it in range(self.args.sample_step):  # we run the sampling for three times
 
                     e = torch.randn_like(x0)
-                    total_noise_levels = int(self.args.t * (0.7 ** it))
+
+                    # [self.args.t] means denosing step number
+                    # total_noise_levels.max = int(0.7 * self.args.t)
+                    total_noise_levels = int(self.args.t * (0.7 ** it)) 
 
                     a = (1 - self.betas).cumprod(dim=0)
+                    # a[total_noise_levels - 1] means alpha_t_hat in paper, a.shape = (1000,1)
+                    # 根据扩散模型的公式，计算当前步骤的噪声数据。x0是原始数据，e是添加的噪声，a[total_noise_levels - 1]表示当前步骤数据保留的比例。
                     x = x0 * a[total_noise_levels - 1].sqrt() + e * (1.0 - a[total_noise_levels - 1]).sqrt()
 
                     # if self.config.model.type == 'conditional':
@@ -458,25 +498,18 @@ class Diffusion(object):
                     # elif self.config.sampling.lambda_ > 0:
                     #     physical_gradient_func = lambda x: \
                     #         voriticity_residual(scaler.inverse(x))[0] / scaler.scale() * self.config.sampling.lambda_
-
                     num_of_reverse_steps = int(self.args.reverse_steps * (0.7 ** it ))
+                    if num_of_reverse_steps == 0:
+                        # print("num_of_reverse_steps", num_of_reverse_steps)
+                        num_of_reverse_steps = 1
                     betas = self.betas.to(self.device)
+                    # 计算每一步去噪时跳过的噪声水平数，以便减少计算量。
                     skip = total_noise_levels // num_of_reverse_steps
+                    # 生成一个序列，表示去噪过程中每一步的噪声水平索引。
                     seq = range(0, total_noise_levels, skip)
-
-                    if self.config.model.type == 'conditional':
-                        xs, _ = guided_ddim_steps(x, seq, model, betas,
-                                                  w=self.config.sampling.guidance_weight,
-                                                  dx_func=physical_gradient_func, cache=False, logger=logger)
-                    elif self.config.sampling.lambda_ > 0:
-                        xs, _ = ddim_steps(x, seq, model, betas,
-                                           dx_func=physical_gradient_func, cache=False, logger=logger)
-                    else:
-                        xs, _ = ddim_steps(x, seq, model, betas, cache=False, logger=logger)
-
-                    x = xs[-1]
-                    x0 = xs[-1].cuda()
-
+                    xs = model_forward(x)
+                    x = xs
+                    x0 = xs.cuda()
                     l2_loss_f = l2_loss(scaler.inverse(x.clone()).to(gt.device), gt)
                     self.log('L2 loss it{}: {}'.format(it, l2_loss_f))
                     # residual_loss_f = voriticity_residual(scaler.inverse(x.clone()), calc_grad=False).detach()
@@ -495,10 +528,11 @@ class Diffusion(object):
                     if self.config.sampling.log_loss:
                         logger.log(os.path.join(self.image_sample_dir, sample_folder), f'run_{repeat}_it{it}')
                         logger.reset()
-            sample_img_filename = 'NN_predict_image.png'
-            path_to_dump = os.path.join(self.image_sample_dir, sample_folder, sample_img_filename)
-            # make_image_grid(slice2sequence(scaler.inverse(x.clone())), path_to_dump)
-            make_image_grid_cylinder(slice2sequence(scaler.inverse(x.clone())), path_to_dump)
+                    sample_img_filename = f"NN_predict_image_denosing_step_{it}.png"
+                    path_to_dump = os.path.join(self.image_sample_dir, sample_folder, sample_img_filename)
+                    # make_image_grid(slice2sequence(scaler.inverse(x.clone())), path_to_dump)
+                    x_split = split_data(x)
+                    make_image_grid_cylinder(slice2sequence(scaler.inverse(x_split.clone())), path_to_dump)
             # with open(os.path.join(self.image_sample_dir, sample_folder, f'log.pkl'), 'wb') as f:
             #     pickle.dump({'l2 loss': l2_loss_log, 'residual loss': residual_loss_log, 'bicubic': bicubic_log}, f)
             self.log('Finished batch {}'.format(batch_index))

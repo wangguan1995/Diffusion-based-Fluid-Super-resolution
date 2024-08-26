@@ -5,10 +5,12 @@ dir = "/workspace/wangguan/PaddleScience_Private/Re3900_cylinder/Re3900_0115/Dat
 save_dir = "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/"
 def get_low_res(mesh, sorted_indices, var):
     u = mesh.point_data[var][sorted_indices]
+    print("u.shape", u.shape)
 
     u_2d = []
     for i in range(400):
         u_2d.append(u[i * 176 : (i+1) * 176])
+    print(np.array(u_2d).shape)
     u_2d = np.array(u_2d).squeeze(-1).T
 
     downsample = 4
@@ -33,8 +35,9 @@ def generate_data(dir):
     # shape = [10, 3, 176, 400], [time, velocity, x, y]
     velocity_high_res = []
     velocity_low_res = []
-    for i in range(100):
+    for i in range(200):
         index = 400000 + i * 100
+        print("index", index)
         mesh = meshio.read(dir + f"/DNS_slice_{index}.vtu")
         points = mesh.points
         sorted_indices = np.lexsort((points[:,1], points[:,0]))
