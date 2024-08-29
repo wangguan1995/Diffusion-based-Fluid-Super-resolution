@@ -50,7 +50,10 @@ In the subdirectory ``./train_ddpm/``, run:
 
 ```
 # Re 3900 Cylinder Slice, velocity x
-python main.py --config cylinder_re3900.yml --exp ./experiments/re3900/ --doc ./weights/re3900/ --ni
+python main.py --config cylinder_re3900.yml --exp ./experiments/cylinder_re3900/ --doc ./weights/re3900/ --ni
+
+# Re 1000 JHTDB Slice, velocity x
+python main.py --config jhtdb_re1000.yml --exp ./experiments/jhtdb_re1000/ --doc ./weights/jhtdb_re1000/ --ni
 
 # Re 1000 2D turbulence
 python main.py --config ./km_re1000_rs256_conditional.yml --exp ./experiments/km256/ --doc ./weights/km256/ --ni
@@ -80,6 +83,9 @@ In the main directory of this repo, run:
 ```
 # Re 3900 Cylinder Slice, velocity x
 python main.py --config cylinder_re3900.yml --seed 1234 --sample_step 3 --t 240 --r 30
+
+# Re 1000 JHTDB Slice, velocity x
+python main.py --config jhtdb_re1000.yml --seed 1234 --sample_step 3 --t 240 --r 30
 
 # Re 1000 2D turbulence
 python main.py --config kmflow_re1000_rs256_sparse_recons.yml --seed 1234 --sample_step 1 --t 240 --r 30

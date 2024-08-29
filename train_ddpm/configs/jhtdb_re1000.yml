@@ -1,9 +1,9 @@
-log_dir: "./experiments/re3900"
+log_dir: "./experiments/jhtdb_re1000"
 data:
-    dataset: "cylinder flow re3900"
-    data_dir: "./data/re3900/velocity_high_res.npy"
-    sample_data_dir: "./data/re3900/velocity_low_res.npy"
-    stat_path: "./data/re3900/velocity_stat.npz"
+    dataset: "jhtdb re1000"
+    data_dir: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/jhtbd/jhtdb_high_res.npy"
+    sample_data_dir: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/jhtbd/jhtdb_low_res.npy"
+    stat_path: "jhtdb_re1000_stat_x"
     image_size: 256
     channels: 3
     logit_transform: false
@@ -17,6 +17,8 @@ data:
     blur_method: "nearest"
     blur_scale: 8
     smoothing_scale: 5
+    patch_row_num: 4
+    patch_col_num: 4
 
 
 model:
@@ -33,8 +35,6 @@ model:
     ema_rate: 0.9999
     ema: True
     resamp_with_conv: True
-    ckpt_path: "./train_ddpm/experiments/cylinder_re3900/logs/weights/re3900/ckpt_28200.pth"
-    
 
 diffusion:
     beta_schedule: linear
@@ -43,7 +43,7 @@ diffusion:
     num_diffusion_timesteps: 1000 # Might need to be changed to 500 later to match SDEdit
 
 training:
-    batch_size: 4
+    batch_size: 8
     n_epochs: 100 # 300 epoch for about 12 hours
     n_iters: 200000
     snapshot_freq: 10000
