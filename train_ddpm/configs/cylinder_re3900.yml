@@ -1,9 +1,10 @@
 log_dir: "./experiments/re3900"
+
 data:
     dataset: "cylinder flow re3900"
     data_dir: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/velocity_high_res.npy"
     sample_data_dir: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/velocity_low_res.npy"
-    stat_path: ""
+    stat_path: "cylinder_re3900"
     image_size: 256
     channels: 3
     logit_transform: false
@@ -18,7 +19,6 @@ data:
     blur_scale: 8
     smoothing_scale: 5
 
-
 model:
     type: "simple"
     in_channels: 3
@@ -31,9 +31,7 @@ model:
     var_type: fixedlarge
     ema_rate: 0.9999
     ema: True
-    resamp_with_conv: True
-    ckpt_path: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/train_ddpm/checkpoint/ckpt_100.pth" #这个地方忘记改了，后面实验需要去掉试试
-    
+    resamp_with_conv: True  
 
 diffusion:
     beta_schedule: linear
