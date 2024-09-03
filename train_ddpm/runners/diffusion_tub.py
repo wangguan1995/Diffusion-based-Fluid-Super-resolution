@@ -9,6 +9,7 @@ import torch
 import torch.utils.data as data
 
 from models.diffusion import Model, ConditionalModel
+from models.diffusion_spatial_temperal import Model_Spatial_Temperal
 from models.ema import EMAHelper
 from functions import get_optimizer
 from functions.losses import loss_registry
@@ -22,7 +23,7 @@ from tensorboardX import SummaryWriter
 from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-from datasets.utils import KMFlowTensorDataset
+from datasets.utils import KMFlowTensorDataset, KMFlowTensorDataset_ST
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -109,26 +110,39 @@ class Diffusion(object):
         args, config = self.args, self.config
         tb_logger = self.config.tb_logger
 
+        if config.model.type == "simple":
+            train_dataset = KMFlowTensorDataset
+        elif config.model.type == "spatial_temperal":
+            train_dataset = KMFlowTensorDataset_ST
+        else:
+            raise NotImplementedError(f"{config.model.type} not implemented!")
+
         # Load training and test datasets
         if os.path.exists(config.data.stat_path):
             print("Loading dataset statistics from {}".format(config.data.stat_path))
-            train_data = KMFlowTensorDataset(config.data.data_dir, stat_path=config.data.stat_path)
+            train_data = train_dataset(config.data.data_dir, stat_path=config.data.stat_path)
         else:
             print("No dataset statistics found. Computing statistics...")
-            train_data = KMFlowTensorDataset(config.data.data_dir, )
+            train_data = train_dataset(config.data.data_dir, )
             train_data.save_data_stats(config.data.stat_path)
 
         train_loader = torch.utils.data.DataLoader(train_data,
                                                    batch_size=config.training.batch_size,
                                                    shuffle=True,
                                                    num_workers=config.data.num_workers)
-
-        model = Model(config)
+        if config.model.type == "simple":
+            model = Model(config)
+        elif config.model.type == "spatial_temperal":
+            model = Model_Spatial_Temperal(config)
+        else:
+            raise NotImplementedError(f"{config.model.type} not implemented!")
 
         model = model.to(self.device)
         # model = torch.nn.DataParallel(model)
 
         optimizer = get_optimizer(self.config, model.parameters())
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer,step_size=self.config.training.n_epochs//5, gamma=0.1)
+        lrs = []
 
         if self.config.model.ema:
             ema_helper = EMAHelper(mu=self.config.model.ema_rate)
@@ -218,8 +232,10 @@ class Diffusion(object):
                 data_start = time.time()
                 num_iter = num_iter + 1
             print("==========================================================")
-            print("Epoch: {}/{}, Loss: {}".format(epoch, self.config.training.n_epochs, np.mean(epoch_loss)))
-        print("Finished training")
+            scheduler.step()
+            lrs.append([group['lr'] for group in optimizer.param_groups])
+            text_message = "Epoch: {}/{}, Loss: {}, Lr: {}".format(epoch, self.config.training.n_epochs, np.mean(epoch_loss), lrs[-1][0])
+            writer.add_text('Training_Info', text_message, epoch)
         logging.info(
             f"step: {step}, loss: {loss.item()}, data time: {data_time / (i + 1)}"
         )

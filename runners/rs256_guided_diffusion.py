@@ -386,8 +386,7 @@ class Diffusion(object):
 
         model.eval()
         self.log('Preparing data')
-        # ref_data, blur_data, data_mean, data_std = load_recons_data(self.config.data.data_dir,
-        ref_data, blur_data, data_mean, data_std = load_recons_data_re3900(self.config.data.data_dir,
+        ref_data, blur_data, data_mean, data_std = load_recons_data(self.config.data.data_dir,
                                                                     self.config.data.sample_data_dir,
                                                                     self.config.data.data_kw,
                                                                     smoothing=self.config.data.smoothing,
