@@ -10,6 +10,7 @@ import torch.utils.data as data
 
 from models.diffusion import Model, ConditionalModel
 from models.diffusion_spatial_temperal import Model_Spatial_Temperal
+from models.DIT import DiT_models
 from models.ema import EMAHelper
 from functions import get_optimizer
 from functions.losses import loss_registry
@@ -23,7 +24,7 @@ from tensorboardX import SummaryWriter
 from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-from datasets.utils import KMFlowTensorDataset, KMFlowTensorDataset_ST
+from datasets.utils import KMFlowTensorDataset, KMFlowTensorDataset_ST, KMFlowTensorDataset_DIT
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -114,6 +115,8 @@ class Diffusion(object):
             train_dataset = KMFlowTensorDataset
         elif config.model.type == "spatial_temperal":
             train_dataset = KMFlowTensorDataset_ST
+        elif config.model.type == "DIT":
+            train_dataset = KMFlowTensorDataset_DIT
         else:
             raise NotImplementedError(f"{config.model.type} not implemented!")
 
@@ -134,6 +137,8 @@ class Diffusion(object):
             model = Model(config)
         elif config.model.type == "spatial_temperal":
             model = Model_Spatial_Temperal(config)
+        elif config.model.type == "DIT":
+            model = DiT_models['DiT-S/8'](input_size_x=config.data.input_size_x, input_size_y=config.data.input_size_y, in_channels=config.data.channels,frame_number=config.data.frame_number,)
         else:
             raise NotImplementedError(f"{config.model.type} not implemented!")
 
@@ -231,11 +236,11 @@ class Diffusion(object):
 
                 data_start = time.time()
                 num_iter = num_iter + 1
-            print("==========================================================")
             scheduler.step()
             lrs.append([group['lr'] for group in optimizer.param_groups])
             text_message = "Epoch: {}/{}, Loss: {}, Lr: {}".format(epoch, self.config.training.n_epochs, np.mean(epoch_loss), lrs[-1][0])
             writer.add_text('Training_Info', text_message, epoch)
+            print(text_message)
         logging.info(
             f"step: {step}, loss: {loss.item()}, data time: {data_time / (i + 1)}"
         )

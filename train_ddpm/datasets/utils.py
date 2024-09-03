@@ -572,3 +572,87 @@ class KMFlowTensorDataset_ST(Dataset):
             if len(self.cache) > self.max_cache_len:
                 self.cache.pop(list(self.cache.keys())[np.random.choice(len(self.cache.keys()))])
             return frame
+
+
+class KMFlowTensorDataset_DIT(Dataset):
+    def __init__(self, data_path,
+                 train_ratio=0.9, test=False,
+                 stat_path=None,
+                 max_cache_len=4000,
+                 patch_size=40,
+                 frame_number=10,
+                 ):
+        np.random.seed(1)
+        self.patch_size=patch_size
+        self.frame_number=frame_number
+        self.all_data = np.load(data_path)
+        self.all_data = self.pad_with_zeros(self.all_data, self.patch_size)
+        print("all_data.shape", self.all_data.shape)
+        idxs = np.arange(self.all_data.shape[0])
+        num_of_training_seeds = int(train_ratio*len(idxs))
+        # np.random.shuffle(idxs)
+        self.train_time_index_list = idxs[:num_of_training_seeds]
+        self.test_time_index_list = idxs[num_of_training_seeds:]
+        if not test:
+            self.idx_lst = self.train_time_index_list[:]
+        else:
+            self.idx_lst = self.test_time_index_list[:]
+        self.cache = {}
+        self.max_cache_len = max_cache_len
+
+        if stat_path is not None:
+            self.stat_path = stat_path
+            self.stat = np.load(stat_path)
+        else:
+            self.stat = {}
+            self.prepare_data()
+
+    def __len__(self):
+        return len(self.idx_lst)
+
+    def prepare_data(self):
+        # load all training data and calculate their statistics
+        self.stat['mean'] = np.mean(self.all_data[self.train_time_index_list[:]].reshape(-1, 1))
+        self.stat['scale'] = np.std(self.all_data[self.train_time_index_list[:]].reshape(-1, 1))
+        data_mean = self.stat['mean']
+        data_scale = self.stat['scale']
+        print(f'Data statistics, mean: {data_mean}, scale: {data_scale}')
+
+    def pad_with_zeros(self, data, patch_size):
+        # 补0， data.shape = [time, dim, nx, ny]
+        n_x = int(np.ceil(data.shape[2] / patch_size) * patch_size)
+        n_y = int(np.ceil(data.shape[3] / patch_size) * patch_size)
+        expanded_matrix = np.zeros((data.shape[0], data.shape[1], n_x, n_y), dtype=np.float)  
+        expanded_matrix[:, :, :data.shape[2], :data.shape[3]] = data  
+        return expanded_matrix
+
+    def preprocess_data(self, data):
+        # normalize data
+
+        s = data.shape[-1]
+
+        data = (data - self.stat['mean']) / (self.stat['scale'])
+        return data.astype(np.float32)
+
+    def save_data_stats(self, out_dir):
+        # save data statistics to out_dir
+        np.savez(out_dir, mean=self.stat['mean'], scale=self.stat['scale'])
+
+    def __getitem__(self, idx):
+        id = idx
+        if id in self.cache.keys():
+            return self.cache[id]
+        else:
+            frame_list = []
+            for i in range(self.frame_number):
+                frame_i = self.all_data[idx + i]
+                frame_i = self.preprocess_data(frame_i)
+                frame_list.append(frame_i)
+            frame = np.stack(frame_list)
+            # [time, uvw, x, y] -> [uvw, time, x, y]
+            frame = np.transpose(frame, (1, 0, 2, 3))
+            self.cache[id] = frame
+
+            if len(self.cache) > self.max_cache_len:
+                self.cache.pop(list(self.cache.keys())[np.random.choice(len(self.cache.keys()))])
+            return frame

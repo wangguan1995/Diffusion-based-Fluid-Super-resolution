@@ -106,5 +106,6 @@ def conditional_noise_estimation_loss(model,
 loss_registry = {
     'simple': noise_estimation_loss,
     'spatial_temperal': spatial_temperal_ddim_loss,
+    'DIT': spatial_temperal_ddim_loss,
     'conditional': conditional_noise_estimation_loss
 }
