@@ -9,6 +9,8 @@ import torchvision.transforms as transforms
 
 from models.diffusion_new import ConditionalModel as CModel
 from models.diffusion_new import Model
+from train_ddpm.models.diffusion_spatial_temperal import Model_Spatial_Temperal
+
 from functions.process_data import *
 from functions.denoising_step import guided_ddpm_steps, guided_ddim_steps, ddpm_steps, ddim_steps
 
@@ -64,25 +66,27 @@ def get_beta_schedule(*, beta_start, beta_end, num_diffusion_timesteps):
     return betas
 
 
-def load_flow_data(path, stat_path=None):
-    # load flow data from path
-    data = np.load(path)   # [N, T, h, w]
-
-    print('Original data shape:', data.shape)
-    data_mean, data_scale = np.mean(data[:-4]), np.std(data[:-4])
-    print(f'Data range: mean: {data_mean} scale: {data_scale}')
-    data = data[-4:, ...].copy().astype(np.float32)   # only take the test set
-    data = torch.as_tensor(data, dtype=torch.float32)
-    flattened_data = []
-    for i in range(data.shape[0]):
-        for j in range(data.shape[1]-2):
-            flattened_data.append(data[i, j:j+3, ...])
-    flattened_data = torch.stack(flattened_data, dim=0)
-    print(f'data shape: {flattened_data.shape}')
-    return flattened_data, data_mean.item(), data_scale.item()
+@torch.no_grad()
+def patchify_new(data_input):
+    data = data_input.cpu().numpy()
+    block_size = 40
+    # 补0， data.shape = [time, dim, nx, ny]
+    n_x = int(np.ceil(data.shape[2] / block_size) * block_size)
+    n_y = int(np.ceil(data.shape[3] / block_size) * block_size)
+    expanded_matrix = np.zeros((data.shape[0], data.shape[1], n_x, n_y), dtype=np.float)  
+    expanded_matrix[:, :, :data.shape[2], :data.shape[3]] = data  
+    # split image into 4*10 patches and concatenate them
+    # 切分图像为4*10的子图像，并拼接
+    sub_patches_list = []
+    for row_blocks in np.split(expanded_matrix, int(n_x / block_size), axis=2):   # 2 rows
+        for block in np.split(row_blocks, int(n_y / block_size), axis=3):       # 2 cols  
+            sub_patches_list.append(block)
+    
+    sub_patches = np.stack(sub_patches_list, axis=0)
+    return sub_patches
 
 @torch.no_grad()
-def patchify(data):
+def patchify_old(data):
     data = data.cpu().numpy()
     block_size = 40
     # 补0， data.shape = [time, dim, nx, ny]
@@ -288,36 +292,47 @@ class Diffusion_Re3900(object):
     def log(self, info):
         self.logger.info(info)
 
-    def make_image_grid(self, images, out_path, ncols=4):
-        t, h, w = images.shape
-        b = t // ncols
-        fig = plt.figure(figsize=(8., 8.))
-        grid = ImageGrid(fig, 111, nrows_ncols=(b, ncols))
-        for ax, im_no in zip(grid, np.arange(b*ncols)):
-            ax.imshow(images[im_no, :, :], cmap='twilight', vmin=self.ref_data_min, vmax=self.ref_data_max)
-            ax.axis('off')
-        plt.savefig(out_path, bbox_inches='tight', dpi=100)
-        plt.close()
+    def make_image_grid(self, images, out_path, ncols=4, batch_index=1):
+        bs, t, c, h, w = 0, 1, 0, 0, 0
+        if len(images.shape) == 4:
+            bs, c, h, w = images.shape
+            images = images[:,:,None,:,:]
+        elif len(images.shape) == 5:
+            bs, t, c, h, w = images.shape
+        else:
+            raise NotImplementedError
+        images = images[:, :, 0, :, :] # plot velocity in x direction
+        for i in range(t):
+            image = images[:, i, :, :] # plot velocity in x direction int time step i
+            time = int(batch_index * t + i)
+            out_path_new = out_path.replace('.png', '_t_{}.png'.format(time))
+            b = bs // ncols
+            fig = plt.figure(figsize=(8., 8.))
+            grid = ImageGrid(fig, 111, nrows_ncols=(b, ncols))
+            for ax, im_no in zip(grid, np.arange(b*ncols)):
+                ax.imshow(image[im_no, :, :], cmap='twilight', vmin=self.ref_data_min, vmax=self.ref_data_max)
+                ax.axis('off')
+
+            plt.savefig(out_path_new, bbox_inches='tight', dpi=100)
+            plt.close()
 
     def reconstruct(self):
         self.log('Doing sparse reconstruction task')
-        self.log("Loading model")
+        self.log(f'Using Model: {self.config.model.type}')
 
         if self.config.model.type == 'conditional':
-            print('Using conditional model')
             model = CModel(self.config)
+            raise NotImplementedError
+        elif self.config.model.type == 'spatial_temperal':
+            model = Model_Spatial_Temperal(self.config)
+            patchify = patchify_new
         else:
-            print('Using unconditional model')
+            patchify = patchify_old
             model = Model(self.config)
 
         model.load_state_dict(torch.load(self.config.model.ckpt_path)[-1])
-
         model.to(self.device)
-
-        self.log("Model loaded")
-
         model.eval()
-        self.log('Preparing data')
         ref_data, blur_data, data_mean, data_std = load_recons_data(self.config.data.data_dir,
                                                                     self.config.data.sample_data_dir,
                                                                     self.config.data.data_kw,
@@ -325,20 +340,15 @@ class Diffusion_Re3900(object):
                                                                     smoothing_scale=self.config.data.smoothing_scale)
         patch_row_num = int(np.ceil(ref_data.shape[2] / 40))
         patch_col_num = int(np.ceil(ref_data.shape[3] / 40))
-        print("ref_data.shape", ref_data.shape)
-        print("reblur_dataf_data.shape", blur_data.shape)
         scaler = StdScaler(data_mean, data_std)
         self.ref_data_min = ref_data.min()
         self.ref_data_max = ref_data.max()
-        # minmax_scaler = MinMaxScaler(ref_data.min(), ref_data.max())
-
-        self.log("Start sampling")
 
         # pack data loader
         testset = torch.utils.data.TensorDataset(blur_data, ref_data)
         test_loader = torch.utils.data.DataLoader(testset,
                                                   batch_size=self.config.sampling.batch_size,
-                                                  shuffle=False, num_workers=self.config.data.num_workers)
+                                                  shuffle=False, num_workers=self.config.data.num_workers, drop_last=True)
 
         l2_loss_all = np.zeros((ref_data.shape[0], self.args.repeat_run, self.args.sample_step))
         residual_loss_all = np.zeros((ref_data.shape[0], self.args.repeat_run, self.args.sample_step))
@@ -347,28 +357,10 @@ class Diffusion_Re3900(object):
         for batch_index, (blur_data, data) in enumerate(test_loader):
             self.log('Batch: {} / Total batch {}'.format(batch_index, len(test_loader)))
             x0 = blur_data.to(self.device)  # x0 : 低精度 输入数据， batch_size=20
-
             gt = data.to(self.device)       # gt : 高精度 参考数据， batch_size=20
-            self.log('Preparing reference image')
-            self.log('Dumping visualization...')
-
-            sample_folder = 'sample_batch{}'.format(batch_index)
-            ensure_dir(os.path.join(self.image_sample_dir, sample_folder))
-
-            sample_img_filename = 'input_image.png'
-            path_to_dump = os.path.join(self.image_sample_dir, sample_folder, sample_img_filename)
             x0_masked = x0.clone()
-            self.make_image_grid(slice2sequence(patchify(x0_masked)), path_to_dump, patch_col_num)
-            sample_img_filename = 'reference_image.png'
-            path_to_dump = os.path.join(self.image_sample_dir, sample_folder, sample_img_filename)
-            self.make_image_grid(slice2sequence(patchify(gt)), path_to_dump, patch_col_num)
-
-            # save as array
-            if self.config.sampling.dump_arr:
-                np.save(os.path.join(self.image_sample_dir, sample_folder, 'input_arr.npy'),
-                        slice2sequence(x0).cpu().numpy())
-                np.save(os.path.join(self.image_sample_dir, sample_folder, 'reference_arr.npy'),
-                        slice2sequence(data).cpu().numpy())
+            self.make_image_grid(patchify(x0_masked), self.image_sample_dir + '/input_image.png', patch_col_num, batch_index)
+            self.make_image_grid(patchify(gt), self.image_sample_dir + '/reference_image.png', patch_col_num, batch_index)
 
             # calculate initial loss
             #l1_loss_init = l1_loss(x0, gt)
@@ -380,8 +372,6 @@ class Diffusion_Re3900(object):
             # gt_residual = voriticity_residual(gt)[1].detach()
             # init_residual : 进入神经网络前，【低精度参考数据 x0】的NS方程残差
             # init_residual = voriticity_residual(x0)[1].detach()
-            # self.log('Residual init: {}'.format(init_residual))
-            # self.log('Residual reference: {}'.format(gt_residual))
 
             x0 = scaler(x0)
             xinit = x0.clone()
@@ -398,7 +388,6 @@ class Diffusion_Re3900(object):
                 })
 
             def model_forward(x):
-                print("model_forward")
                 x = patchify(x.clone())
                 x = torch.Tensor(x).cuda()
                 logger = None
@@ -409,10 +398,17 @@ class Diffusion_Re3900(object):
                 elif self.config.sampling.lambda_ > 0:
                     xs, _ = ddim_steps(x, seq, model, betas,
                                     dx_func=physical_gradient_func, cache=False, logger=logger)
+                elif self.config.model.type == 'spatial_temperal':
+                    x = x.permute((0,2,1,3,4)) # time and frame id in 3rd channel
+                    xs, _ = ddim_steps(x, seq, model, betas, cache=False, logger=logger)
+                    xs[-1] = xs[-1].permute((0,2,1,3,4)) # time and frame id in 3rd channel
+                    xs = torch.cat([xs[-1][i:i+patch_col_num] for i in range(0, patch_row_num * patch_col_num, patch_col_num)], dim=3) 
+                    xs = torch.cat([xs[i:i+1] for i in range(patch_col_num)], dim=4)
+                    xs = xs[0]
                 else:
                     xs, _ = ddim_steps(x, seq, model, betas, cache=False, logger=logger)
-                xs = torch.cat([xs[-1][i:i+patch_col_num] for i in range(0, patch_row_num * patch_col_num, patch_col_num)], dim=2) 
-                xs = torch.cat([xs[i:i+1] for i in range(patch_col_num)], dim=3)
+                    xs = torch.cat([xs[-1][i:i+patch_col_num] for i in range(0, patch_row_num * patch_col_num, patch_col_num)], dim=2) 
+                    xs = torch.cat([xs[i:i+1] for i in range(patch_col_num)], dim=3)
                 return xs
 
             # we repeat the sampling for multiple times
@@ -439,7 +435,6 @@ class Diffusion_Re3900(object):
                     #         voriticity_residual(scaler.inverse(x))[0] / scaler.scale() * self.config.sampling.lambda_
                     num_of_reverse_steps = int(self.args.reverse_steps * (0.7 ** it ))
                     if num_of_reverse_steps == 0:
-                        # print("num_of_reverse_steps", num_of_reverse_steps)
                         num_of_reverse_steps = 1
                     betas = self.betas.to(self.device)
                     # 计算每一步去噪时跳过的噪声水平数，以便减少计算量。
@@ -460,17 +455,11 @@ class Diffusion_Re3900(object):
                     # residual_loss_all[batch_index * x.shape[0]:(batch_index + 1) * x.shape[0], repeat,
                     # it] = residual_loss_f.item()
 
-                    if self.config.sampling.dump_arr:
-                        np.save(os.path.join(self.image_sample_dir, sample_folder, f'sample_arr_run_{repeat}_it{it}.npy'),
-                                slice2sequence(scaler.inverse(x)).cpu().numpy())
-
                     if self.config.sampling.log_loss:
-                        logger.log(os.path.join(self.image_sample_dir, sample_folder), f'run_{repeat}_it{it}')
+                        logger.log(self.image_sample_dir, f'run_{repeat}_it{it}')
                         logger.reset()
-                    sample_img_filename = f"NN_predict_image_denosing_step_{it}.png"
-                    path_to_dump = os.path.join(self.image_sample_dir, sample_folder, sample_img_filename)
                     x_split = patchify(x)
-                    self.make_image_grid(slice2sequence(scaler.inverse(x_split)), path_to_dump, patch_col_num)
+                self.make_image_grid(scaler.inverse(x_split), self.image_sample_dir + f"/predict.png", patch_col_num, batch_index)
             # with open(os.path.join(self.image_sample_dir, sample_folder, f'log.pkl'), 'wb') as f:
             #     pickle.dump({'l2 loss': l2_loss_log, 'residual loss': residual_loss_log, 'bicubic': bicubic_log}, f)
             self.log('Finished batch {}'.format(batch_index))
@@ -480,6 +469,3 @@ class Diffusion_Re3900(object):
         self.log(f'std l2 loss: {l2_loss_all[..., -1].std(axis=1).mean()}')
         self.log(f'mean residual loss: {residual_loss_all[..., -1].mean()}')
         self.log(f'std residual loss: {residual_loss_all[..., -1].std(axis=1).mean()}')
-
-
-
