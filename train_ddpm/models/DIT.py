@@ -151,7 +151,7 @@ class FinalLayer(nn.Module):
         return x
 
 
-class DiT_old(nn.Module):
+class DiT(nn.Module):
     """
     Diffusion model with a Transformer backbone.
     """
@@ -275,7 +275,7 @@ class DiT_old(nn.Module):
         return torch.cat([eps, rest], dim=1)
 
 
-class DiT(nn.Module):
+class DiT_(nn.Module):
     """
     Diffusion model with a Transformer backbone.
     """

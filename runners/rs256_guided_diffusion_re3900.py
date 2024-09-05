@@ -103,11 +103,17 @@ def patchify_old(data):
     return np.concatenate(sub_matrices, axis=0)
 
 
-def load_recons_data(ref_path, sample_data_dir, data_kw, smoothing, smoothing_scale):
+def load_recons_data(ref_path, sample_data_dir, stat_path, smoothing, smoothing_scale, train_ratio=0.9):
     flattened_ref_data = np.load(ref_path)
     flattened_sampled_data = np.load(sample_data_dir)
-
+    num_train = flattened_sampled_data.shape[0]
+    num_train = int(train_ratio * num_train)
+    flattened_ref_data = flattened_ref_data[num_train:]
+    flattened_sampled_data = flattened_sampled_data[num_train:]
+    stat = np.load(stat_path)
     data_mean, data_scale = np.mean(flattened_ref_data), np.std(flattened_ref_data)
+    data_mean, data_scale = stat["mean"], stat["scale"]
+    print(f"Data statistics, mean: {data_mean}, scale: {data_scale}")
     flattened_ref_data = torch.Tensor(flattened_ref_data)
     flattened_sampled_data = torch.Tensor(flattened_sampled_data)
 
@@ -200,7 +206,11 @@ def l1_loss(x, y):
 
 
 def l2_loss(x, y):
-    return ((x - y)**2).mean((-1, -2)).sqrt().mean()
+    l2_list = []
+    for i in range(x.shape[0]):
+        l2 = ((x[i] - y[i])**2).mean((-1, -2)).sqrt().mean()
+        l2_list.append(float(l2))
+    return np.mean(l2_list)
 
 
 def voriticity_residual(w, re=1000.0, dt=1/32, calc_grad=True):
@@ -317,9 +327,6 @@ class Diffusion_Re3900(object):
             plt.close()
 
     def reconstruct(self):
-        self.log('Doing sparse reconstruction task')
-        self.log(f'Using Model: {self.config.model.type}')
-
         if self.config.model.type == 'conditional':
             model = CModel(self.config)
             raise NotImplementedError
@@ -335,7 +342,7 @@ class Diffusion_Re3900(object):
         model.eval()
         ref_data, blur_data, data_mean, data_std = load_recons_data(self.config.data.data_dir,
                                                                     self.config.data.sample_data_dir,
-                                                                    self.config.data.data_kw,
+                                                                    self.config.data.stat_path,
                                                                     smoothing=self.config.data.smoothing,
                                                                     smoothing_scale=self.config.data.smoothing_scale)
         patch_row_num = int(np.ceil(ref_data.shape[2] / 40))
@@ -350,31 +357,21 @@ class Diffusion_Re3900(object):
                                                   batch_size=self.config.sampling.batch_size,
                                                   shuffle=False, num_workers=self.config.data.num_workers, drop_last=True)
 
-        l2_loss_all = np.zeros((ref_data.shape[0], self.args.repeat_run, self.args.sample_step))
-        residual_loss_all = np.zeros((ref_data.shape[0], self.args.repeat_run, self.args.sample_step))
-
+        l2_loss_predict_all = np.zeros((ref_data.shape[0], self.args.sample_step))
+        l2_loss_reference_all = np.zeros((ref_data.shape[0], self.args.sample_step))
+        residual_loss_all = np.zeros((ref_data.shape[0], self.args.sample_step))
 
         for batch_index, (blur_data, data) in enumerate(test_loader):
             self.log('Batch: {} / Total batch {}'.format(batch_index, len(test_loader)))
             x0 = blur_data.to(self.device)  # x0 : 低精度 输入数据， batch_size=20
             gt = data.to(self.device)       # gt : 高精度 参考数据， batch_size=20
             x0_masked = x0.clone()
-            self.make_image_grid(patchify(x0_masked), self.image_sample_dir + '/input_image.png', patch_col_num, batch_index)
-            self.make_image_grid(patchify(gt), self.image_sample_dir + '/reference_image.png', patch_col_num, batch_index)
-
-            # calculate initial loss
-            #l1_loss_init = l1_loss(x0, gt)
-            # l2_loss_init : 进入神经网络前，【低精度输入数据 x0】和【高精度参考数据 gt】之间的l2误差
-            l2_loss_init = l2_loss(x0, gt)                          
-
+            # self.make_image_grid(patchify(x0_masked), self.image_sample_dir + '/input_image.png', patch_col_num, batch_index)
+            # self.make_image_grid(patchify(gt), self.image_sample_dir + '/reference_image.png', patch_col_num, batch_index)
+            l2_loss_init = l2_loss(x0, gt)                   
+            l2_loss_reference_all[batch_index] = (l2_loss_init.item())         
             self.log('L2 loss init: {}'.format(l2_loss_init))
-            # gt_residual : 进入神经网络前，【高精度参考数据 gt】的NS方程残差
-            # gt_residual = voriticity_residual(gt)[1].detach()
-            # init_residual : 进入神经网络前，【低精度参考数据 x0】的NS方程残差
-            # init_residual = voriticity_residual(x0)[1].detach()
-
-            x0 = scaler(x0)
-            xinit = x0.clone()
+            x0 =  (x0)
             
             # prepare loss function
             if self.config.sampling.log_loss:
@@ -411,61 +408,26 @@ class Diffusion_Re3900(object):
                     xs = torch.cat([xs[i:i+1] for i in range(patch_col_num)], dim=3)
                 return xs
 
-            # we repeat the sampling for multiple times
-            for repeat in range(self.args.repeat_run):
-                self.log(f'Run No.{repeat}:')
-                x0 = xinit.clone()
-                for it in range(self.args.sample_step):  # we run the sampling for three times
-
-                    e = torch.randn_like(x0)
-
-                    # [self.args.t] means denosing step number
-                    # total_noise_levels.max = int(0.7 * self.args.t)
-                    total_noise_levels = int(self.args.t * (0.7 ** it)) 
-
-                    a = (1 - self.betas).cumprod(dim=0)
-                    # a[total_noise_levels - 1] means alpha_t_hat in paper, a.shape = (1000,1)
-                    # 根据扩散模型的公式，计算当前步骤的噪声数据。x0是原始数据，e是添加的噪声，a[total_noise_levels - 1]表示当前步骤数据保留的比例。
-                    x = x0 * a[total_noise_levels - 1].sqrt() + e * (1.0 - a[total_noise_levels - 1]).sqrt()
-
-                    # if self.config.model.type == 'conditional':
-                    #     physical_gradient_func = lambda x: voriticity_residual(scaler.inverse(x))[0] / scaler.scale()
-                    # elif self.config.sampling.lambda_ > 0:
-                    #     physical_gradient_func = lambda x: \
-                    #         voriticity_residual(scaler.inverse(x))[0] / scaler.scale() * self.config.sampling.lambda_
-                    num_of_reverse_steps = int(self.args.reverse_steps * (0.7 ** it ))
-                    if num_of_reverse_steps == 0:
-                        num_of_reverse_steps = 1
-                    betas = self.betas.to(self.device)
-                    # 计算每一步去噪时跳过的噪声水平数，以便减少计算量。
-                    skip = total_noise_levels // num_of_reverse_steps
-                    # 生成一个序列，表示去噪过程中每一步的噪声水平索引。
-                    seq = range(0, total_noise_levels, skip)
-                    xs = model_forward(x)
-                    x = xs[:,:,:ref_data.shape[2],:ref_data.shape[3]]
-                    x0 = xs.cuda()
-                    l2_loss_f = l2_loss(scaler.inverse(x.clone()).to(gt.device), gt)
-                    self.log('L2 loss it{}: {}'.format(it, l2_loss_f))
-                    # residual_loss_f = voriticity_residual(scaler.inverse(x.clone()), calc_grad=False).detach()
-                    # self.log('Residual it{}: {}'.format(it, residual_loss_f))
-
-                    # l2_loss_log[f'run_{repeat}'].append(l2_loss_f.item())
-                    # residual_loss_log[f'run_{repeat}'].append(residual_loss_f.item())
-                    l2_loss_all[batch_index * x.shape[0]:(batch_index + 1) * x.shape[0], repeat, it] = l2_loss_f.item()
-                    # residual_loss_all[batch_index * x.shape[0]:(batch_index + 1) * x.shape[0], repeat,
-                    # it] = residual_loss_f.item()
-
-                    if self.config.sampling.log_loss:
-                        logger.log(self.image_sample_dir, f'run_{repeat}_it{it}')
-                        logger.reset()
-                    x_split = patchify(x)
-                self.make_image_grid(scaler.inverse(x_split), self.image_sample_dir + f"/predict.png", patch_col_num, batch_index)
-            # with open(os.path.join(self.image_sample_dir, sample_folder, f'log.pkl'), 'wb') as f:
-            #     pickle.dump({'l2 loss': l2_loss_log, 'residual loss': residual_loss_log, 'bicubic': bicubic_log}, f)
+            for it in range(self.args.sample_step):  # we run the sampling for three times
+                e = torch.randn_like(x0)
+                total_noise_levels = int(self.args.t * (0.7 ** it)) 
+                a = (1 - self.betas).cumprod(dim=0)
+                x = x0 * a[total_noise_levels - 1].sqrt() + e * (1.0 - a[total_noise_levels - 1]).sqrt()
+                num_of_reverse_steps = int(self.args.reverse_steps * (0.7 ** it ))
+                if num_of_reverse_steps == 0:
+                    num_of_reverse_steps = 1
+                betas = self.betas.to(self.device)
+                skip = total_noise_levels // num_of_reverse_steps
+                seq = range(0, total_noise_levels, skip)
+                xs = model_forward(x)
+                x = xs[:,:,:ref_data.shape[2],:ref_data.shape[3]]
+                x0 = xs.cuda()
+                l2_loss_f = l2_loss(scaler.inverse(x.clone()).to(gt.device), gt)
+                l2_loss_predict_all[batch_index * x.shape[0]:(batch_index + 1) * x.shape[0], it] = l2_loss_f.item()
+                self.log('L2 loss it{}: {}'.format(it, l2_loss_f))
+            self.make_image_grid(scaler.inverse(patchify(x)), self.image_sample_dir + f"/predict.png", patch_col_num, batch_index)
             self.log('Finished batch {}'.format(batch_index))
             self.log('========================================================')
         self.log('Finished sampling')
-        self.log(f'mean l2 loss: {l2_loss_all[..., -1].mean()}')
-        self.log(f'std l2 loss: {l2_loss_all[..., -1].std(axis=1).mean()}')
-        self.log(f'mean residual loss: {residual_loss_all[..., -1].mean()}')
-        self.log(f'std residual loss: {residual_loss_all[..., -1].std(axis=1).mean()}')
+        self.log(f'mean l2 reference loss: {l2_loss_reference_all[..., -1].mean()}')
+        self.log(f'mean l2 predict   loss: {l2_loss_predict_all[..., -1].mean()}')

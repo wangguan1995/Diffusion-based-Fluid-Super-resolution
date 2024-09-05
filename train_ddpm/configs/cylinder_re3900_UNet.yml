@@ -1,10 +1,10 @@
-log_dir: "./experiments/re3900"
+log_dir: "./experiments/cylinder_re3900_UNet_1"
 
 data:
     dataset: "cylinder flow re3900"
-    data_dir: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/velocity_high_res.npy"
-    sample_data_dir: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/velocity_low_res.npy"
-    stat_path: "cylinder_re3900"
+    data_dir: "../data/re3900/velocity_high_res.npy"
+    sample_data_dir: "../data/re3900/velocity_low_res.npy"
+    stat_path: "./experiments/cylinder_re3900_UNet_1/cylinder_re3900"
     image_size: 256
     channels: 3
     logit_transform: false
@@ -41,7 +41,7 @@ diffusion:
 
 training:
     batch_size: 32
-    n_epochs: 100 # 300 epoch for about 12 hours
+    n_epochs: 300 # 300 epoch for about 12 hours
     n_iters: 200000
     snapshot_freq: 10000
     validation_freq: 2000
@@ -56,7 +56,7 @@ sampling:
 optim:
     weight_decay: 0.000
     optimizer: "Adam"
-    lr: 0.0001
+    lr: 0.0002
     beta1: 0.9
     amsgrad: false
     eps: 0.00000001

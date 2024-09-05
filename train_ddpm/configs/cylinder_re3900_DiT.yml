@@ -1,10 +1,12 @@
-log_dir: "./experiments/cylinder_re3900_st_UNet"
+log_dir: "./experiments/cylinder_re3900_DiT"
+
+# python main.py --config cylinder_re3900_DiT.yml --exp ./experiments/cylinder_re3900_DiT/ --ni
 
 data:
     dataset: "cylinder flow re3900"
-    data_dir: "./data/re3900/velocity_high_res.npy"
-    sample_data_dir: "./data/re3900/velocity_low_res.npy"
-    stat_path: "./train_ddpm/experiments/cylinder_re3900_st_UNet/cylinder_re3900.npz"
+    data_dir: "../data/re3900/velocity_high_res.npy"
+    sample_data_dir: "../data/re3900/velocity_low_res.npy"
+    stat_path: "./experiments/cylinder_re3900_DiT/cylinder_re3900"
     image_size: 256
     channels: 3
     logit_transform: false
@@ -20,8 +22,7 @@ data:
     smoothing_scale: 5
 
 model:
-    name: "Diffusion_Re3900"
-    type: "spatial_temperal"
+    type: "DIT"
     in_channels: 3
     out_ch: 3
     ch: 64
@@ -32,8 +33,7 @@ model:
     var_type: fixedlarge
     ema_rate: 0.9999
     ema: True
-    resamp_with_conv: True
-    ckpt_path: "./train_ddpm/experiments/cylinder_re3900_st_UNet/logs/ckpt_15400.pth"
+    resamp_with_conv: True  
 
 diffusion:
     beta_schedule: linear
@@ -49,8 +49,7 @@ training:
     validation_freq: 2000
 
 sampling:
-    # batch_size: 49 # keep this to be 1, it breaks into [40 sub_graph] from [1 time-step cylinder slice], so real batch size is 40
-    batch_size: 10 
+    batch_size: 20
     last_only: True
     lambda_: 0.
     dump_arr: True
@@ -59,7 +58,7 @@ sampling:
 optim:
     weight_decay: 0.000
     optimizer: "Adam"
-    lr: 0.0001
+    lr: 0.0002
     beta1: 0.9
     amsgrad: false
     eps: 0.00000001

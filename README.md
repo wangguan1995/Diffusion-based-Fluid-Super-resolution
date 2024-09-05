@@ -55,14 +55,13 @@ In the subdirectory ``./train_ddpm/``, run:
 
 ```
 # Re 3900 Cylinder Slice, velocity x
-python main.py --config cylinder_re3900_UNet.yml --exp ./experiments/cylinder_re3900/ --doc ./weights/re3900/ --ni
+python main.py --config cylinder_re3900_UNet.yml --exp ./experiments/cylinder_re3900_UNet/ --ni
 
 # Re 3900 Cylinder, Slice,  Spatial Temperal Patches, velocity x ,UNet
-python main.py --config cylinder_re3900_st_UNet.yml --exp ./experiments/cylinder_re3900_st_UNet/ --doc ./weights/cylinder_re3900_st_UNet/ --ni
-
+python main.py --config cylinder_re3900_st_UNet.yml --exp ./experiments/cylinder_re3900_st_UNet/ --ni
 
 # Re 1000 JHTDB Slice, velocity x
-python main.py --config jhtdb_re1000.yml --exp ./experiments/jhtdb_re1000/ --doc ./weights/jhtdb_re1000/ --ni
+python main.py --config jhtdb_re1000.yml --exp ./experiments/jhtdb_re1000/ --doc ./ --ni
 
 # Re 1000 JHTDB Slice Spatial Temperal Patches, velocity x
 python main.py --config jhtdb_re1000_spatial_temperal.yml --exp ./experiments/jhtdb_re1000/ --doc ./weights/jhtdb_re1000/ --ni
@@ -97,10 +96,10 @@ In the main directory of this repo, run:
 
 ```
 # Re 3900 Cylinder Slice, velocity x
-python main.py --config cylinder_re3900_UNet.yml --seed 1234 --sample_step 3 --t 240 --r 30
+python main.py --config cylinder_re3900_UNet.yml --seed 1234 --sample_step 1 --t 240 --r 30
 
 # Re 3900 Cylinder, Slice,  Spatial Temperal Patches, velocity x ,UNet
-python main.py --config cylinder_re3900_st_UNet.yml --seed 1234 --sample_step 3 --t 240 --r 30
+python main.py --config cylinder_re3900_st_UNet.yml --seed 1234 --sample_step 1 --t 240 --r 30
 
 # Re 1000 JHTDB Slice, velocity x
 python main.py --config jhtdb_re1000.yml --seed 1234 --sample_step 3 --t 240 --r 30

@@ -2,9 +2,9 @@ log_dir: "./experiments/cylinder_re3900_st_UNet"
 
 data:
     dataset: "cylinder flow re3900"
-    data_dir: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/velocity_high_res.npy"
-    sample_data_dir: "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/velocity_low_res.npy"
-    stat_path: "cylinder_re3900"
+    data_dir: "../data/re3900/velocity_high_res.npy"
+    sample_data_dir: "../data/re3900/velocity_low_res.npy"
+    stat_path: "./experiments/cylinder_re3900_st_UNet/cylinder_re3900.npz"
     image_size: 256
     channels: 3
     logit_transform: false
@@ -18,6 +18,9 @@ data:
     blur_method: "nearest"
     blur_scale: 8
     smoothing_scale: 5
+    block_size: 40
+    frame_number: 4
+    train_ratio: 0.5
 
 model:
     type: "spatial_temperal"
@@ -56,7 +59,7 @@ sampling:
 optim:
     weight_decay: 0.000
     optimizer: "Adam"
-    lr: 0.0001
+    lr: 0.001
     beta1: 0.9
     amsgrad: false
     eps: 0.00000001

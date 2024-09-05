@@ -375,45 +375,26 @@ class KMFlowDataset(Dataset):
 
 
 class KMFlowTensorDataset(Dataset):
-    def __init__(self, data_path,
-                 train_ratio=0.9, test=False,
-                 stat_path=None,
-                 max_cache_len=4000,
-                 ):
+    def __init__(self, config, data_path, train_ratio=0.9, test=False, stat_path=None, max_cache_len=4000,):
         np.random.seed(1)
         self.all_data = np.load(data_path)
+        num_train = self.all_data.shape[0]
+        num_train = int(train_ratio * num_train)
+        self.all_data = self.all_data[:num_train]
         self.all_data = self.patchify(self.all_data)
         print('Data set shape: ', self.all_data.shape)
-        idxs = np.arange(self.all_data.shape[0])
-        num_of_training_seeds = int(train_ratio*len(idxs))
-        # np.random.shuffle(idxs)
-        self.train_time_index_list = idxs[:num_of_training_seeds]
-        self.test_time_index_list = idxs[num_of_training_seeds:]
-        self.spatial_index_list = np.arange(self.all_data.shape[1]-2)
-        if not test:
-            self.idx_lst = self.train_time_index_list[:]
-        else:
-            self.idx_lst = self.test_time_index_list[:]
-        self.cache = {}
-        self.max_cache_len = max_cache_len
-
-        if stat_path is not None:
-            self.stat_path = stat_path
-            self.stat = np.load(stat_path)
-        else:
-            self.stat = {}
-            self.prepare_data()
+        self.stat = self.prepare_data()
 
     def __len__(self):
-        return len(self.idx_lst) * len(self.spatial_index_list)
+        return self.all_data.shape[0]
 
     def prepare_data(self):
-        # load all training data and calculate their statistics
-        self.stat['mean'] = np.mean(self.all_data[self.train_time_index_list[:]].reshape(-1, 1))
-        self.stat['scale'] = np.std(self.all_data[self.train_time_index_list[:]].reshape(-1, 1))
-        data_mean = self.stat['mean']
-        data_scale = self.stat['scale']
-        print(f'Data statistics, mean: {data_mean}, scale: {data_scale}')
+        stat = {
+            'mean': np.mean(self.all_data.reshape(-1, 1)),
+            'scale': np.std(self.all_data.reshape(-1, 1)),
+        }
+        print(f"Data statistics, mean: {stat['mean']}, scale: {stat['scale']}")
+        return stat
 
     def patchify(self, data):
         data = data
@@ -433,9 +414,7 @@ class KMFlowTensorDataset(Dataset):
 
     def preprocess_data(self, data):
         # normalize data
-
         s = data.shape[-1]
-
         data = (data - self.stat['mean']) / (self.stat['scale'])
         return data.astype(np.float32)
 
@@ -444,43 +423,25 @@ class KMFlowTensorDataset(Dataset):
         np.savez(out_dir, mean=self.stat['mean'], scale=self.stat['scale'])
 
     def __getitem__(self, idx):
-        seed = self.idx_lst[idx // len(self.spatial_index_list)]
-        frame_idx = idx % len(self.spatial_index_list)
-        id = idx
-
-        if id in self.cache.keys():
-            return self.cache[id]
-        else:
-            frame0 = self.preprocess_data(self.all_data[seed, frame_idx])
-            frame1 = self.preprocess_data(self.all_data[seed, frame_idx+1])
-            frame2 = self.preprocess_data(self.all_data[seed, frame_idx+2])
-
-            frame = np.concatenate((frame0[None, ...], frame1[None, ...], frame2[None, ...]), axis=0)
-            self.cache[id] = frame
-
-            if len(self.cache) > self.max_cache_len:
-                self.cache.pop(list(self.cache.keys())[np.random.choice(len(self.cache.keys()))])
-            return frame
+        frame0 = self.preprocess_data(self.all_data[idx, 0])
+        frame1 = self.preprocess_data(self.all_data[idx, 1])
+        frame2 = self.preprocess_data(self.all_data[idx, 2])
+        frame = np.concatenate((frame0[None, ...], frame1[None, ...], frame2[None, ...]), axis=0)
+        return frame
 
 
 class KMFlowTensorDataset_ST(Dataset):
-    def __init__(self, data_path,
-                 train_ratio=0.9, test=False,
-                 stat_path=None,
-                 max_cache_len=4000,
-                 block_size=40,
-                 frame_number=10,
-                 ):
+    def __init__(self, config, data_path, test=False, stat_path=None, max_cache_len=4000):
         np.random.seed(1)
-        self.frame_number = frame_number
-        self.block_size = block_size
+        self.frame_number = config.data.frame_number
+        self.block_size = config.data.block_size
         self.all_data = np.load(data_path)
         self.all_data = self.patchify_spatial_temperal(self.all_data)
         print('Data set shape: ', self.all_data.shape)
         idxs = np.arange(self.all_data.shape[1]-self.frame_number)
-        num_of_training_seeds = int(train_ratio*len(idxs))
-        self.train_time_index_list = idxs[:num_of_training_seeds]
-        self.test_time_index_list = idxs[num_of_training_seeds:]
+        train_number = int(config.data.train_ratio*len(idxs))
+        self.train_time_index_list = idxs[:train_number]
+        self.test_time_index_list = idxs[train_number:]
         self.spatial_index_list = np.arange(self.all_data.shape[0])
         if not test:
             self.idx_lst = self.train_time_index_list[:]
@@ -506,21 +467,6 @@ class KMFlowTensorDataset_ST(Dataset):
         data_mean = self.stat['mean']
         data_scale = self.stat['scale']
         print(f'Data statistics, mean: {data_mean}, scale: {data_scale}')
-
-    def patchify(self, data):
-        data = data
-        # 补0， data.shape = [time, dim, nx, ny]
-        n_x = int(np.ceil(data.shape[2] / self.block_size) * self.block_size)
-        n_y = int(np.ceil(data.shape[3] / self.block_size) * self.block_size)
-        expanded_matrix = np.zeros((data.shape[0], data.shape[1], n_x, n_y), dtype=np.float)  
-        expanded_matrix[:, :, :data.shape[2], :data.shape[3]] = data  
-        # split image into 4*10 patches and concatenate them
-        # 切分图像为4*10的子图像，并拼接
-        sub_matrices = []
-        for row_blocks in np.split(expanded_matrix, int(n_x / self.block_size), axis=2):   # 2 rows
-            for block in np.split(row_blocks, int(n_y / self.block_size), axis=3):       # 2 cols  
-                sub_matrices.append(block)
-        return np.concatenate(sub_matrices, axis=0)
 
     def patchify_spatial_temperal(self, data):
         data = data
@@ -575,7 +521,7 @@ class KMFlowTensorDataset_ST(Dataset):
 
 
 class KMFlowTensorDataset_DIT(Dataset):
-    def __init__(self, data_path,
+    def __init__(self, config, data_path,
                  train_ratio=0.9, test=False,
                  stat_path=None,
                  max_cache_len=4000,
@@ -656,3 +602,59 @@ class KMFlowTensorDataset_DIT(Dataset):
             if len(self.cache) > self.max_cache_len:
                 self.cache.pop(list(self.cache.keys())[np.random.choice(len(self.cache.keys()))])
             return frame
+
+
+class KMFlowTensorDataset_DiT(Dataset):
+    def __init__(self, config, data_path, train_ratio=0.9, test=False, stat_path=None, max_cache_len=4000,):
+        np.random.seed(1)
+        self.all_data = np.load(data_path)
+        num_train = self.all_data.shape[0]
+        num_train = int(train_ratio * num_train)
+        self.all_data = self.all_data[:num_train]
+        self.all_data = self.patchify(self.all_data)
+        print('Data set shape: ', self.all_data.shape)
+        self.stat = self.prepare_data()
+
+    def __len__(self):
+        return self.all_data.shape[0]
+
+    def prepare_data(self):
+        stat = {
+            'mean': np.mean(self.all_data.reshape(-1, 1)),
+            'scale': np.std(self.all_data.reshape(-1, 1)),
+        }
+        print(f"Data statistics, mean: {stat['mean']}, scale: {stat['scale']}")
+        return stat
+
+    def patchify(self, data):
+        data = data
+        block_size = 40
+        # 补0， data.shape = [time, dim, nx, ny]
+        n_x = int(np.ceil(data.shape[2] / block_size) * block_size)
+        n_y = int(np.ceil(data.shape[3] / block_size) * block_size)
+        expanded_matrix = np.zeros((data.shape[0], data.shape[1], n_x, n_y), dtype=np.float)  
+        expanded_matrix[:, :, :data.shape[2], :data.shape[3]] = data  
+        # split image into 4*10 patches and concatenate them
+        # 切分图像为4*10的子图像，并拼接
+        sub_matrices = []
+        for row_blocks in np.split(expanded_matrix, int(n_x / block_size), axis=2):   # 2 rows
+            for block in np.split(row_blocks, int(n_y / block_size), axis=3):       # 2 cols  
+                sub_matrices.append(block)
+        return np.concatenate(sub_matrices, axis=0)
+
+    def preprocess_data(self, data):
+        # normalize data
+        s = data.shape[-1]
+        data = (data - self.stat['mean']) / (self.stat['scale'])
+        return data.astype(np.float32)
+
+    def save_data_stats(self, out_dir):
+        # save data statistics to out_dir
+        np.savez(out_dir, mean=self.stat['mean'], scale=self.stat['scale'])
+
+    def __getitem__(self, idx):
+        frame0 = self.preprocess_data(self.all_data[idx, 0])
+        frame1 = self.preprocess_data(self.all_data[idx, 1])
+        frame2 = self.preprocess_data(self.all_data[idx, 2])
+        frame = np.concatenate((frame0[None, ...], frame1[None, ...], frame2[None, ...]), axis=0)
+        return frame
