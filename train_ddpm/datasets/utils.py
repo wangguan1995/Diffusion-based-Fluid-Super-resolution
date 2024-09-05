@@ -622,7 +622,6 @@ class KMFlowTensorDataset_DiT(Dataset):
         num_train = self.all_data.shape[0]
         num_train = int(train_ratio * num_train)
         self.all_data = self.all_data[:num_train]
-        self.all_data = self.patchify(self.all_data)
         print('Data set shape: ', self.all_data.shape)
         self.stat = self.prepare_data()
 
@@ -664,8 +663,4 @@ class KMFlowTensorDataset_DiT(Dataset):
         np.savez(out_dir, mean=self.stat['mean'], scale=self.stat['scale'])
 
     def __getitem__(self, idx):
-        frame0 = self.preprocess_data(self.all_data[idx, 0])
-        frame1 = self.preprocess_data(self.all_data[idx, 1])
-        frame2 = self.preprocess_data(self.all_data[idx, 2])
-        frame = np.concatenate((frame0[None, ...], frame1[None, ...], frame2[None, ...]), axis=0)
-        return frame
+        return self.all_data[idx]

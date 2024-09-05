@@ -56,6 +56,7 @@ In the subdirectory ``./train_ddpm/``, run:
 ```
 # Re 3900 Cylinder Slice, velocity x
 python main.py --config cylinder_re3900_UNet.yml --exp ./experiments/cylinder_re3900_UNet/ --ni
+python main.py --config cylinder_re3900_DiT.yml --exp ./experiments/cylinder_re3900_DiT/ --ni
 
 # Re 3900 Cylinder, Slice,  Spatial Temperal Patches, velocity x ,UNet
 python main.py --config cylinder_re3900_st_UNet.yml --exp ./experiments/cylinder_re3900_st_UNet/ --ni

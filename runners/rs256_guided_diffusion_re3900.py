@@ -1,6 +1,7 @@
 import os
 import numpy as np
 from tqdm import tqdm
+from functools import reduce
 
 import torch
 import torchvision.utils as tvu
@@ -130,6 +131,21 @@ def load_recons_data(ref_path, sample_data_dir, stat_path, smoothing, smoothing_
     # ref_data, blur_data, data_mean, data_std
     return flattened_ref_data, flattened_sampled_data, data_mean.item(), data_scale.item()
 
+
+def summary(model):
+    def count_parameters(model):  
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)  
+
+    def get_model_size(model):  
+        model_size = sum(param.numel() for param in model.parameters())  
+        return model_size  
+    
+    # 使用上面的 MyModel  
+    print(f"Model has {count_parameters(model)} trainable parameters")  
+    print(f"Model size: {get_model_size(model)} parameters")  
+            
+    # 以更易读的格式显示大小（假设每个参数是 32 位浮点数，即 4 字节）  
+    print(f"Model size in MB: {get_model_size(model) * 4 / (1024 ** 2):.2f} MB")
 
 
 class MinMaxScaler(object):
@@ -339,6 +355,7 @@ class Diffusion_Re3900(object):
         print(f"Loading model from {self.config.model.ckpt_path}")
         model.load_state_dict(torch.load(self.config.model.ckpt_path)[-1])
         model.to(self.device)
+        summary(model)
         model.eval()
         ref_data, blur_data, data_mean, data_std = load_recons_data(self.config.data.data_dir,
                                                                     self.config.data.sample_data_dir,
