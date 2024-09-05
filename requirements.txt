@@ -7,3 +7,6 @@ einops==0.4.1
 matplotlib==3.6.2
 pyyaml
 tensorboardX
+timm
+diffusers
+accelerate

@@ -1,8 +1,6 @@
 import meshio
 import matplotlib.pyplot as plt
 import numpy as np
-z_coordinate = "0.12567601"
-dir = f"/workspace/wangguan/PaddleScience_Private/Re3900_cylinder/Re3900_0115/Data/slice_{z_coordinate}"
 save_dir = "/workspace/wangguan/Diffusion-based-Fluid-Super-resolution/data/re3900/"
 def get_low_res(mesh, sorted_indices, var):
     u = mesh.point_data[var][sorted_indices]
@@ -32,7 +30,7 @@ def plot_data(u_2d, u_2d_downsampled):
     plt.imshow(u_2d_downsampled, cmap='hot', interpolation='nearest')
     plt.savefig('u_2d_downsampled.png')
 
-def generate_data(dir):
+def generate_data(dir, z_coordinate):
     # shape = [10, 3, 176, 400], [time, velocity, x, y]
     velocity_high_res = []
     velocity_low_res = []
@@ -54,6 +52,8 @@ def generate_data(dir):
     print(velocity_low_res.shape)
     print(velocity_high_res.shape)
     plot_data(velocity_high_res[0][1], velocity_low_res[0][1])
-        
 
-generate_data(dir)
+z_coordinate = ["0.01396", "0.02514", "0.03630", "0.04748", "0.05865", "0.06982", "0.08100", "0.09216", "0.10333", "0.11451", "0.12568"]
+for i in range(11):
+    dir = f"/workspace/wangguan/PaddleScience_Private/Re3900_cylinder/Re3900_0115/Data/slice_{z_coordinate[i]}"
+    generate_data(dir, z_coordinate[i])

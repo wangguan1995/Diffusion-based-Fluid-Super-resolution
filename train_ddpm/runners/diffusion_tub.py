@@ -10,9 +10,11 @@ import torch.utils.data as data
 
 from models.diffusion import Model, ConditionalModel
 from models.diffusion_spatial_temperal import Model_Spatial_Temperal
+from models.DIT import DiT_models
 from models.ema import EMAHelper
 from functions import get_optimizer
 from functions.losses import loss_registry
+from functions.denoising import generalized_steps, ddim_steps
 from datasets import get_dataset, data_transform, inverse_data_transform
 from functions.ckpt_util import get_ckpt_path
 
@@ -23,7 +25,7 @@ from tensorboardX import SummaryWriter
 from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-from datasets.utils import KMFlowTensorDataset, KMFlowTensorDataset_ST
+from datasets.utils import KMFlowTensorDataset, KMFlowTensorDataset_ST, KMFlowTensorDataset_DIT, KMFlowTensorDataset_DiT
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -69,6 +71,108 @@ def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_time
     return betas
 
 
+def l2_loss(x, y):
+    return ((x - y)**2).mean((-1, -2)).sqrt().mean()
+
+
+def load_recons_data(ref_path, sample_data_dir, data_kw, smoothing, smoothing_scale):
+    flattened_ref_data = np.load(ref_path)
+    flattened_sampled_data = np.load(sample_data_dir)
+
+    data_mean, data_scale = np.mean(flattened_ref_data), np.std(flattened_ref_data)
+    flattened_ref_data = torch.Tensor(flattened_ref_data)
+    flattened_sampled_data = torch.Tensor(flattened_sampled_data)
+
+    if smoothing:
+        arr = flattened_sampled_data
+        ker_size = smoothing_scale
+        # peridoic padding
+        arr = F.pad(arr,
+                    pad=((ker_size - 1) // 2, (ker_size - 1) // 2, (ker_size - 1) // 2, (ker_size - 1) // 2),
+                    mode='circular', )
+        arr = transforms.GaussianBlur(kernel_size=ker_size, sigma=ker_size)(arr)# F.avg_pool2d(arr, (ker_size, ker_size), stride=1, count_include_pad=False)
+        flattened_sampled_data = arr[..., (ker_size - 1) // 2:-(ker_size - 1) // 2, (ker_size - 1) // 2:-(ker_size - 1) // 2]
+
+    # ref_data, blur_data, data_mean, data_std
+    return flattened_ref_data, flattened_sampled_data, data_mean.item(), data_scale.item()
+
+
+class MetricLogger(object):
+    def __init__(self, metric_fn_dict):
+        self.metric_fn_dict = metric_fn_dict
+        self.metric_dict = {}
+        self.reset()
+
+    def reset(self):
+        for key in self.metric_fn_dict.keys():
+            self.metric_dict[key] = []
+
+    @torch.no_grad()
+    def update(self, **kwargs):
+        for key in self.metric_fn_dict.keys():
+            self.metric_dict[key].append(self.metric_fn_dict[key](**kwargs))
+
+    def get(self):
+        return self.metric_dict.copy()
+
+    def log(self, outdir, postfix=''):
+        with open(os.path.join(outdir, f'metric_log_{postfix}.pkl'), 'wb') as f:
+            pickle.dump(self.metric_dict, f)
+
+
+@torch.no_grad()
+def patchify_new(data_input):
+    data = data_input.cpu().numpy()
+    block_size = 40
+    # 补0， data.shape = [time, dim, nx, ny]
+    n_x = int(np.ceil(data.shape[2] / block_size) * block_size)
+    n_y = int(np.ceil(data.shape[3] / block_size) * block_size)
+    expanded_matrix = np.zeros((data.shape[0], data.shape[1], n_x, n_y), dtype=np.float)  
+    expanded_matrix[:, :, :data.shape[2], :data.shape[3]] = data  
+    # split image into 4*10 patches and concatenate them
+    # 切分图像为4*10的子图像，并拼接
+    sub_patches_list = []
+    for row_blocks in np.split(expanded_matrix, int(n_x / block_size), axis=2):   # 2 rows
+        for block in np.split(row_blocks, int(n_y / block_size), axis=3):       # 2 cols  
+            sub_patches_list.append(block)
+    
+    sub_patches = np.stack(sub_patches_list, axis=0)
+    return sub_patches
+
+
+@torch.no_grad()
+def patchify_old(data):
+    data = data.cpu().numpy()
+    block_size = 40
+    # 补0， data.shape = [time, dim, nx, ny]
+    n_x = int(np.ceil(data.shape[2] / block_size) * block_size)
+    n_y = int(np.ceil(data.shape[3] / block_size) * block_size)
+    expanded_matrix = np.zeros((data.shape[0], data.shape[1], n_x, n_y), dtype=np.float)  
+    expanded_matrix[:, :, :data.shape[2], :data.shape[3]] = data  
+    # split image into 4*10 patches and concatenate them
+    # 切分图像为4*10的子图像，并拼接
+    sub_matrices = []
+    for row_blocks in np.split(expanded_matrix, int(n_x / block_size), axis=2):   # 2 rows
+        for block in np.split(row_blocks, int(n_y / block_size), axis=3):       # 2 cols  
+            sub_matrices.append(block)
+    return np.concatenate(sub_matrices, axis=0)
+
+
+class StdScaler(object):
+    def __init__(self, mean, std):
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, x):
+        return (x - self.mean) / self.std
+
+    def inverse(self, x):
+        return x * self.std + self.mean
+
+    def scale(self):
+        return self.std
+
+
 class Diffusion(object):
     def __init__(self, args, config, device=None):
         self.args = args
@@ -105,6 +209,7 @@ class Diffusion(object):
             # [posterior_variance[1:2], betas[1:]], dim=0).log()
         elif self.model_var_type == "fixedsmall":
             self.logvar = posterior_variance.clamp(min=1e-20).log()
+        self.logger = args.logger
 
     def train(self):
         args, config = self.args, self.config
@@ -114,16 +219,18 @@ class Diffusion(object):
             train_dataset = KMFlowTensorDataset
         elif config.model.type == "spatial_temperal":
             train_dataset = KMFlowTensorDataset_ST
+        elif config.model.type == "DIT":
+            train_dataset = KMFlowTensorDataset_DiT
         else:
             raise NotImplementedError(f"{config.model.type} not implemented!")
 
         # Load training and test datasets
         if os.path.exists(config.data.stat_path):
             print("Loading dataset statistics from {}".format(config.data.stat_path))
-            train_data = train_dataset(config.data.data_dir, stat_path=config.data.stat_path)
+            train_data = train_dataset(config, config.data.data_dir, stat_path=config.data.stat_path)
         else:
             print("No dataset statistics found. Computing statistics...")
-            train_data = train_dataset(config.data.data_dir, )
+            train_data = train_dataset(config, config.data.data_dir, )
             train_data.save_data_stats(config.data.stat_path)
 
         train_loader = torch.utils.data.DataLoader(train_data,
@@ -134,6 +241,8 @@ class Diffusion(object):
             model = Model(config)
         elif config.model.type == "spatial_temperal":
             model = Model_Spatial_Temperal(config)
+        elif config.model.type == "DIT":
+            model = DiT_models['DiT-S/8']()
         else:
             raise NotImplementedError(f"{config.model.type} not implemented!")
 
@@ -141,7 +250,7 @@ class Diffusion(object):
         # model = torch.nn.DataParallel(model)
 
         optimizer = get_optimizer(self.config, model.parameters())
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer,step_size=self.config.training.n_epochs//5, gamma=0.1)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer,step_size=self.config.training.n_epochs//1, gamma=0.1)
         lrs = []
 
         if self.config.model.ema:
@@ -231,15 +340,11 @@ class Diffusion(object):
 
                 data_start = time.time()
                 num_iter = num_iter + 1
-            print("==========================================================")
             scheduler.step()
             lrs.append([group['lr'] for group in optimizer.param_groups])
             text_message = "Epoch: {}/{}, Loss: {}, Lr: {}".format(epoch, self.config.training.n_epochs, np.mean(epoch_loss), lrs[-1][0])
             writer.add_text('Training_Info', text_message, epoch)
-        logging.info(
-            f"step: {step}, loss: {loss.item()}, data time: {data_time / (i + 1)}"
-        )
-
+            print(text_message)
         torch.save(
             states,
             os.path.join(self.args.log_path, "ckpt_{}.pth".format(step)),
@@ -338,7 +443,6 @@ class Diffusion(object):
                 seq = [int(s) for s in list(seq)]
             else:
                 raise NotImplementedError
-            from functions.denoising import generalized_steps
 
             xs = generalized_steps(x, seq, model, self.betas, eta=self.args.eta)
             x = xs
@@ -367,6 +471,184 @@ class Diffusion(object):
 
     def test(self):
         pass
+
+    def log(self, info):
+        self.logger.info(info)
+
+    def make_image_grid(self, images, out_path, ncols=4, batch_index=1):
+        bs, t, c, h, w = 0, 1, 0, 0, 0
+        if len(images.shape) == 4:
+            bs, c, h, w = images.shape
+            images = images[:,:,None,:,:]
+        elif len(images.shape) == 5:
+            bs, t, c, h, w = images.shape
+        else:
+            raise NotImplementedError
+        images = images[:, :, 0, :, :] # plot velocity in x direction
+        for i in range(t):
+            image = images[:, i, :, :] # plot velocity in x direction int time step i
+            time = int(batch_index * t + i)
+            out_path_new = out_path.replace('.png', '_t_{}.png'.format(time))
+            b = bs // ncols
+            fig = plt.figure(figsize=(8., 8.))
+            grid = ImageGrid(fig, 111, nrows_ncols=(b, ncols))
+            for ax, im_no in zip(grid, np.arange(b*ncols)):
+                ax.imshow(image[im_no, :, :], cmap='twilight', vmin=self.ref_data_min, vmax=self.ref_data_max)
+                ax.axis('off')
+
+            plt.savefig(out_path_new, bbox_inches='tight', dpi=h)
+            plt.close()
+
+    def reconstruct(self):
+        if self.config.model.type == 'conditional':
+            model = CModel(self.config)
+            raise NotImplementedError
+        elif self.config.model.type == 'spatial_temperal':
+            model = Model_Spatial_Temperal(self.config)
+            patchify = patchify_new
+        else:
+            patchify = patchify_old
+            model = Model(self.config)
+
+        model.load_state_dict(torch.load(self.config.model.ckpt_path)[-1])
+        model.to(self.device)
+        model.eval()
+        ref_data, blur_data, data_mean, data_std = load_recons_data(self.config.data.data_dir,
+                                                                    self.config.data.sample_data_dir,
+                                                                    self.config.data.data_kw,
+                                                                    smoothing=self.config.data.smoothing,
+                                                                    smoothing_scale=self.config.data.smoothing_scale)
+        patch_row_num = int(np.ceil(ref_data.shape[2] / 40))
+        patch_col_num = int(np.ceil(ref_data.shape[3] / 40))
+        scaler = StdScaler(data_mean, data_std)
+        self.ref_data_min = ref_data.min()
+        self.ref_data_max = ref_data.max()
+
+        # pack data loader
+        testset = torch.utils.data.TensorDataset(blur_data, ref_data)
+        test_loader = torch.utils.data.DataLoader(testset,
+                                                  batch_size=self.config.sampling.batch_size,
+                                                  shuffle=False, num_workers=self.config.data.num_workers, drop_last=True)
+
+        l2_loss_all = np.zeros((ref_data.shape[0], self.args.repeat_run, self.args.sample_step))
+        residual_loss_all = np.zeros((ref_data.shape[0], self.args.repeat_run, self.args.sample_step))
+
+
+        for batch_index, (blur_data, data) in enumerate(test_loader):
+            self.log('Batch: {} / Total batch {}'.format(batch_index, len(test_loader)))
+            x0 = blur_data.to(self.device)  # x0 : 低精度 输入数据， batch_size=20
+            gt = data.to(self.device)       # gt : 高精度 参考数据， batch_size=20
+            x0_masked = x0.clone()
+            self.make_image_grid(patchify(x0_masked), self.image_sample_dir + '/input_image.png', patch_col_num, batch_index)
+            self.make_image_grid(patchify(gt), self.image_sample_dir + '/reference_image.png', patch_col_num, batch_index)
+
+            # calculate initial loss
+            #l1_loss_init = l1_loss(x0, gt)
+            # l2_loss_init : 进入神经网络前，【低精度输入数据 x0】和【高精度参考数据 gt】之间的l2误差
+            l2_loss_init = l2_loss(x0, gt)                          
+
+            self.log('L2 loss init: {}'.format(l2_loss_init))
+            # gt_residual : 进入神经网络前，【高精度参考数据 gt】的NS方程残差
+            # gt_residual = voriticity_residual(gt)[1].detach()
+            # init_residual : 进入神经网络前，【低精度参考数据 x0】的NS方程残差
+            # init_residual = voriticity_residual(x0)[1].detach()
+
+            x0 = scaler(x0)
+            xinit = x0.clone()
+            
+            # prepare loss function
+            if self.config.sampling.log_loss:
+                l2_loss_fn = lambda x: l2_loss(scaler.inverse(x).to(gt.device), gt)
+                # equation_loss_fn = lambda x: voriticity_residual(scaler.inverse(x),
+                                                                #  calc_grad=False)
+
+                logger = MetricLogger({
+                    'l2 loss': l2_loss_fn,
+                    # 'residual loss': equation_loss_fn
+                })
+
+            def model_forward(x):
+                x = patchify(x.clone())
+                x = torch.Tensor(x).cuda()
+                logger = None
+                if self.config.model.type == 'conditional':
+                    xs, _ = guided_ddim_steps(x, seq, model, betas,
+                                            w=self.config.sampling.guidance_weight,
+                                            dx_func=physical_gradient_func, cache=False, logger=logger)
+                elif self.config.sampling.lambda_ > 0:
+                    xs, _ = ddim_steps(x, seq, model, betas,
+                                    dx_func=physical_gradient_func, cache=False, logger=logger)
+                elif self.config.model.type == 'spatial_temperal':
+                    x = x.permute((0,2,1,3,4)) # time and frame id in 3rd channel
+                    xs, _ = ddim_steps(x, seq, model, betas, cache=False, logger=logger)
+                    xs[-1] = xs[-1].permute((0,2,1,3,4)) # time and frame id in 3rd channel
+                    xs = torch.cat([xs[-1][i:i+patch_col_num] for i in range(0, patch_row_num * patch_col_num, patch_col_num)], dim=3) 
+                    xs = torch.cat([xs[i:i+1] for i in range(patch_col_num)], dim=4)
+                    xs = xs[0]
+                else:
+                    xs, _ = ddim_steps(x, seq, model, betas, cache=False, logger=logger)
+                    xs = torch.cat([xs[-1][i:i+patch_col_num] for i in range(0, patch_row_num * patch_col_num, patch_col_num)], dim=2) 
+                    xs = torch.cat([xs[i:i+1] for i in range(patch_col_num)], dim=3)
+                return xs
+
+            # we repeat the sampling for multiple times
+            for repeat in range(self.args.repeat_run):
+                self.log(f'Run No.{repeat}:')
+                x0 = xinit.clone()
+                for it in range(self.args.sample_step):  # we run the sampling for three times
+
+                    e = torch.randn_like(x0)
+
+                    # [self.args.t] means denosing step number
+                    # total_noise_levels.max = int(0.7 * self.args.t)
+                    total_noise_levels = int(self.args.t * (0.7 ** it)) 
+
+                    a = (1 - self.betas).cumprod(dim=0)
+                    # a[total_noise_levels - 1] means alpha_t_hat in paper, a.shape = (1000,1)
+                    # 根据扩散模型的公式，计算当前步骤的噪声数据。x0是原始数据，e是添加的噪声，a[total_noise_levels - 1]表示当前步骤数据保留的比例。
+                    x = x0 * a[total_noise_levels - 1].sqrt() + e * (1.0 - a[total_noise_levels - 1]).sqrt()
+
+                    # if self.config.model.type == 'conditional':
+                    #     physical_gradient_func = lambda x: voriticity_residual(scaler.inverse(x))[0] / scaler.scale()
+                    # elif self.config.sampling.lambda_ > 0:
+                    #     physical_gradient_func = lambda x: \
+                    #         voriticity_residual(scaler.inverse(x))[0] / scaler.scale() * self.config.sampling.lambda_
+                    num_of_reverse_steps = int(self.args.reverse_steps * (0.7 ** it ))
+                    if num_of_reverse_steps == 0:
+                        num_of_reverse_steps = 1
+                    betas = self.betas.to(self.device)
+                    # 计算每一步去噪时跳过的噪声水平数，以便减少计算量。
+                    skip = total_noise_levels // num_of_reverse_steps
+                    # 生成一个序列，表示去噪过程中每一步的噪声水平索引。
+                    seq = range(0, total_noise_levels, skip)
+                    xs = model_forward(x)
+                    x = xs[:,:,:ref_data.shape[2],:ref_data.shape[3]]
+                    x0 = xs.cuda()
+                    l2_loss_f = l2_loss(scaler.inverse(x.clone()).to(gt.device), gt)
+                    self.log('L2 loss it{}: {}'.format(it, l2_loss_f))
+                    # residual_loss_f = voriticity_residual(scaler.inverse(x.clone()), calc_grad=False).detach()
+                    # self.log('Residual it{}: {}'.format(it, residual_loss_f))
+
+                    # l2_loss_log[f'run_{repeat}'].append(l2_loss_f.item())
+                    # residual_loss_log[f'run_{repeat}'].append(residual_loss_f.item())
+                    l2_loss_all[batch_index * x.shape[0]:(batch_index + 1) * x.shape[0], repeat, it] = l2_loss_f.item()
+                    # residual_loss_all[batch_index * x.shape[0]:(batch_index + 1) * x.shape[0], repeat,
+                    # it] = residual_loss_f.item()
+
+                    if self.config.sampling.log_loss:
+                        logger.log(self.image_sample_dir, f'run_{repeat}_it{it}')
+                        logger.reset()
+                    x_split = patchify(x)
+                self.make_image_grid(scaler.inverse(x_split), self.image_sample_dir + f"/predict.png", patch_col_num, batch_index)
+            # with open(os.path.join(self.image_sample_dir, sample_folder, f'log.pkl'), 'wb') as f:
+            #     pickle.dump({'l2 loss': l2_loss_log, 'residual loss': residual_loss_log, 'bicubic': bicubic_log}, f)
+            self.log('Finished batch {}'.format(batch_index))
+            self.log('========================================================')
+        self.log('Finished sampling')
+        self.log(f'mean l2 loss: {l2_loss_all[..., -1].mean()}')
+        self.log(f'std l2 loss: {l2_loss_all[..., -1].std(axis=1).mean()}')
+        self.log(f'mean residual loss: {residual_loss_all[..., -1].mean()}')
+        self.log(f'std residual loss: {residual_loss_all[..., -1].std(axis=1).mean()}')
 
 
 class ConditionalDiffusion(object):
@@ -522,9 +804,6 @@ class ConditionalDiffusion(object):
             print("==========================================================")
             print("Epoch: {}/{}, Loss: {}".format(epoch, self.config.training.n_epochs, np.mean(epoch_loss)))
         print("Finished training")
-        logging.info(
-            f"step: {step}, loss: {loss.item()}, data time: {data_time / (i + 1)}"
-        )
 
         torch.save(
             states,
@@ -552,4 +831,3 @@ class ConditionalDiffusion(object):
 
     def test(self):
         pass
-
