@@ -1,10 +1,10 @@
-log_dir: "./experiments/cylinder_re3900_UNet_1"
+log_dir: "./experiments/cylinder_re3900_UNet"
 
 data:
     dataset: "cylinder flow re3900"
     data_dir: "../data/re3900/velocity_high_res.npy"
     sample_data_dir: "../data/re3900/velocity_low_res.npy"
-    stat_path: "./experiments/cylinder_re3900_UNet_1/cylinder_re3900"
+    stat_path: "./experiments/cylinder_re3900_UNet/cylinder_re3900"
     image_size: 256
     channels: 3
     logit_transform: false

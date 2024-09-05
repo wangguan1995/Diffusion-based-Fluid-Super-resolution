@@ -21,6 +21,8 @@ def parse_args_and_config():
     parser.add_argument('--t', type=int, default=400, help='Sampling noise scale')
     parser.add_argument('--r', dest='reverse_steps', type=int, default=20, help='Revserse steps')
     parser.add_argument('--comment', type=str, default='', help='Comment')
+    parser.add_argument('--log_dir', type=str, default='', help='log_dir')
+    parser.add_argument('--ckpt_path', type=str, default='', help='ckpt_path')
     args = parser.parse_args()
 
     # parse config file
@@ -48,7 +50,8 @@ def parse_args_and_config():
         dir_name = 'pi_' + dir_name
     else:
         print('Not use physical gradient during sampling')
-
+    config.model.ckpt_path = args.ckpt_path
+    config.log_dir = args.log_dir
     log_dir = os.path.join(config.log_dir, dir_name)
     os.makedirs(log_dir, exist_ok=True)
     with open(os.path.join(log_dir, 'config.yml'), 'w') as outfile:

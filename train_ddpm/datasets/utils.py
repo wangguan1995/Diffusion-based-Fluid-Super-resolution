@@ -377,11 +377,22 @@ class KMFlowDataset(Dataset):
 class KMFlowTensorDataset(Dataset):
     def __init__(self, config, data_path, train_ratio=0.9, test=False, stat_path=None, max_cache_len=4000,):
         np.random.seed(1)
-        self.all_data = np.load(data_path)
-        num_train = self.all_data.shape[0]
-        num_train = int(train_ratio * num_train)
-        self.all_data = self.all_data[:num_train]
-        self.all_data = self.patchify(self.all_data)
+        all_data_list = []
+        if isinstance(data_path, list):
+            for path in data_path:
+                data = np.load(path)
+                num_train = data.shape[0]
+                num_train = int(train_ratio * num_train)
+                data = data[:num_train]
+                all_data_list.append(data)
+            all_data = np.concatenate(all_data_list, axis=0)
+            self.all_data = self.patchify(all_data)
+        else:
+            self.all_data = np.load(data_path)
+            num_train = self.all_data.shape[0]
+            num_train = int(train_ratio * num_train)
+            self.all_data = self.all_data[:num_train]
+            self.all_data = self.patchify(self.all_data)
         print('Data set shape: ', self.all_data.shape)
         self.stat = self.prepare_data()
 

@@ -336,7 +336,7 @@ class Diffusion_Re3900(object):
         else:
             patchify = patchify_old
             model = Model(self.config)
-
+        print(f"Loading model from {self.config.model.ckpt_path}")
         model.load_state_dict(torch.load(self.config.model.ckpt_path)[-1])
         model.to(self.device)
         model.eval()
@@ -371,7 +371,7 @@ class Diffusion_Re3900(object):
             l2_loss_init = l2_loss(x0, gt)                   
             l2_loss_reference_all[batch_index] = (l2_loss_init.item())         
             self.log('L2 loss init: {}'.format(l2_loss_init))
-            x0 =  (x0)
+            x0 = scaler(x0)
             
             # prepare loss function
             if self.config.sampling.log_loss:
@@ -425,7 +425,7 @@ class Diffusion_Re3900(object):
                 l2_loss_f = l2_loss(scaler.inverse(x.clone()).to(gt.device), gt)
                 l2_loss_predict_all[batch_index * x.shape[0]:(batch_index + 1) * x.shape[0], it] = l2_loss_f.item()
                 self.log('L2 loss it{}: {}'.format(it, l2_loss_f))
-            self.make_image_grid(scaler.inverse(patchify(x)), self.image_sample_dir + f"/predict.png", patch_col_num, batch_index)
+            # self.make_image_grid(scaler.inverse(patchify(x)), self.image_sample_dir + f"/predict.png", patch_col_num, batch_index)
             self.log('Finished batch {}'.format(batch_index))
             self.log('========================================================')
         self.log('Finished sampling')
