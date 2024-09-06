@@ -50,8 +50,10 @@ def parse_args_and_config():
         dir_name = 'pi_' + dir_name
     else:
         print('Not use physical gradient during sampling')
-    config.model.ckpt_path = args.ckpt_path
-    config.log_dir = args.log_dir
+    if args.ckpt_path:
+        config.model.ckpt_path = args.ckpt_path
+    if args.log_dir:
+        config.log_dir = args.log_dir
     log_dir = os.path.join(config.log_dir, dir_name)
     os.makedirs(log_dir, exist_ok=True)
     with open(os.path.join(log_dir, 'config.yml'), 'w') as outfile:

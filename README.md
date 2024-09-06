@@ -51,6 +51,7 @@ In the subdirectory ``./train_ddpm/``, run:
 ```
 # Re 3900 Cylinder Slice, velocity x
 python main.py --config cylinder_re3900_UNet.yml --exp ./experiments/cylinder_re3900_UNet/ --ni
+python main.py --config cylinder_re3900_DiT.yml --exp ./experiments/cylinder_re3900_DiT/ --ni
 
 # Re 3900 Cylinder, Slice,  Spatial Temperal Patches, velocity x ,UNet
 python main.py --config cylinder_re3900_st_UNet.yml --exp ./experiments/cylinder_re3900_st_UNet/ --ni
@@ -92,6 +93,7 @@ In the main directory of this repo, run:
 ```
 # Re 3900 Cylinder Slice, velocity x
 python main.py --config cylinder_re3900_UNet_1.yml --seed 1234 --sample_step 1 --t 240 --r 30
+python main.py --config cylinder_re3900_DiT.yml --seed 1234 --sample_step 1 --t 240 --r 30
 
 # Re 3900 Cylinder, Slice,  Spatial Temperal Patches, velocity x ,UNet
 python main.py --config cylinder_re3900_st_UNet.yml --seed 1234 --sample_step 1 --t 240 --r 30
