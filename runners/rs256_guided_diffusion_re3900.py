@@ -11,6 +11,7 @@ import torchvision.transforms as transforms
 from models.diffusion_new import ConditionalModel as CModel
 from models.diffusion_new import Model
 from train_ddpm.models.diffusion_spatial_temperal import Model_Spatial_Temperal
+from train_ddpm.models.DIT import DiT_models
 
 from functions.process_data import *
 from functions.denoising_step import guided_ddpm_steps, guided_ddim_steps, ddpm_steps, ddim_steps
@@ -68,7 +69,7 @@ def get_beta_schedule(*, beta_start, beta_end, num_diffusion_timesteps):
 
 
 @torch.no_grad()
-def patchify_new(data_input):
+def patchify_spatial_temperal(data_input):
     data = data_input.cpu().numpy()
     block_size = 40
     # 补0， data.shape = [time, dim, nx, ny]
@@ -87,7 +88,7 @@ def patchify_new(data_input):
     return sub_patches
 
 @torch.no_grad()
-def patchify_old(data):
+def patchify_spatial(data):
     data = data.cpu().numpy()
     block_size = 40
     # 补0， data.shape = [time, dim, nx, ny]
@@ -318,7 +319,12 @@ class Diffusion_Re3900(object):
     def log(self, info):
         self.logger.info(info)
 
-    def make_image_grid(self, images, out_path, ncols=4, batch_index=1):
+    def make_image_grid(self, input_images, out_path, ncols=4, batch_index=1):
+        if isinstance(input_images, torch.Tensor):  
+            images = input_images.detach().cpu().numpy()
+        else:
+            print(type(input_images))
+            raise NotImplementedError
         bs, t, c, h, w = 0, 1, 0, 0, 0
         if len(images.shape) == 4:
             bs, c, h, w = images.shape
@@ -343,20 +349,6 @@ class Diffusion_Re3900(object):
             plt.close()
 
     def reconstruct(self):
-        if self.config.model.type == 'conditional':
-            model = CModel(self.config)
-            raise NotImplementedError
-        elif self.config.model.type == 'spatial_temperal':
-            model = Model_Spatial_Temperal(self.config)
-            patchify = patchify_new
-        else:
-            patchify = patchify_old
-            model = Model(self.config)
-        print(f"Loading model from {self.config.model.ckpt_path}")
-        model.load_state_dict(torch.load(self.config.model.ckpt_path)[-1])
-        model.to(self.device)
-        summary(model)
-        model.eval()
         ref_data, blur_data, data_mean, data_std = load_recons_data(self.config.data.data_dir,
                                                                     self.config.data.sample_data_dir,
                                                                     self.config.data.stat_path,
@@ -367,6 +359,25 @@ class Diffusion_Re3900(object):
         scaler = StdScaler(data_mean, data_std)
         self.ref_data_min = ref_data.min()
         self.ref_data_max = ref_data.max()
+
+        if self.config.model.type == 'conditional':
+            model = CModel(self.config)
+            raise NotImplementedError
+        elif self.config.model.type == 'spatial_temperal':
+            model = Model_Spatial_Temperal(self.config)
+            patchify = patchify_spatial_temperal
+        elif self.config.model.type == 'DIT':
+            model = DiT_models['DiT-S/8']()
+            patchify = lambda x: x 
+            patch_row_num = 1
+            patch_col_num = 1
+        else:
+            model = Model(self.config)
+            patchify = patchify_spatial
+        model.load_state_dict(torch.load(self.config.model.ckpt_path)[0])
+        model.to(self.device)
+        summary(model)
+        model.eval()
 
         # pack data loader
         testset = torch.utils.data.TensorDataset(blur_data, ref_data)
@@ -410,8 +421,7 @@ class Diffusion_Re3900(object):
                                             w=self.config.sampling.guidance_weight,
                                             dx_func=physical_gradient_func, cache=False, logger=logger)
                 elif self.config.sampling.lambda_ > 0:
-                    xs, _ = ddim_steps(x, seq, model, betas,
-                                    dx_func=physical_gradient_func, cache=False, logger=logger)
+                    xs, _ = ddim_steps(x, seq, model, betas, dx_func=physical_gradient_func, cache=False, logger=logger)
                 elif self.config.model.type == 'spatial_temperal':
                     x = x.permute((0,2,1,3,4)) # time and frame id in 3rd channel
                     xs, _ = ddim_steps(x, seq, model, betas, cache=False, logger=logger)
@@ -419,10 +429,15 @@ class Diffusion_Re3900(object):
                     xs = torch.cat([xs[-1][i:i+patch_col_num] for i in range(0, patch_row_num * patch_col_num, patch_col_num)], dim=3) 
                     xs = torch.cat([xs[i:i+1] for i in range(patch_col_num)], dim=4)
                     xs = xs[0]
+                    x  = xs[:,:,:ref_data.shape[2],:ref_data.shape[3]]
+                elif self.config.model.type == 'DIT':
+                    xs, _ = ddim_steps(x, seq, model, betas, cache=False, logger=logger)
+                    xs = xs[0]
                 else:
                     xs, _ = ddim_steps(x, seq, model, betas, cache=False, logger=logger)
                     xs = torch.cat([xs[-1][i:i+patch_col_num] for i in range(0, patch_row_num * patch_col_num, patch_col_num)], dim=2) 
                     xs = torch.cat([xs[i:i+1] for i in range(patch_col_num)], dim=3)
+                    x  = xs[:,:,:ref_data.shape[2],:ref_data.shape[3]]
                 return xs
 
             for it in range(self.args.sample_step):  # we run the sampling for three times
@@ -436,13 +451,12 @@ class Diffusion_Re3900(object):
                 betas = self.betas.to(self.device)
                 skip = total_noise_levels // num_of_reverse_steps
                 seq = range(0, total_noise_levels, skip)
-                xs = model_forward(x)
-                x = xs[:,:,:ref_data.shape[2],:ref_data.shape[3]]
-                x0 = xs.cuda()
+                xs = model_forward(x).cuda()
+                x0 = xs
                 l2_loss_f = l2_loss(scaler.inverse(x.clone()).to(gt.device), gt)
                 l2_loss_predict_all[batch_index * x.shape[0]:(batch_index + 1) * x.shape[0], it] = l2_loss_f.item()
                 self.log('L2 loss it{}: {}'.format(it, l2_loss_f))
-            # self.make_image_grid(scaler.inverse(patchify(x)), self.image_sample_dir + f"/predict.png", patch_col_num, batch_index)
+            self.make_image_grid(scaler.inverse(patchify(x)), self.image_sample_dir + f"/predict.png", patch_col_num, batch_index)
             self.log('Finished batch {}'.format(batch_index))
             self.log('========================================================')
         self.log('Finished sampling')

@@ -636,22 +636,6 @@ class KMFlowTensorDataset_DiT(Dataset):
         print(f"Data statistics, mean: {stat['mean']}, scale: {stat['scale']}")
         return stat
 
-    def patchify(self, data):
-        data = data
-        block_size = 40
-        # 补0， data.shape = [time, dim, nx, ny]
-        n_x = int(np.ceil(data.shape[2] / block_size) * block_size)
-        n_y = int(np.ceil(data.shape[3] / block_size) * block_size)
-        expanded_matrix = np.zeros((data.shape[0], data.shape[1], n_x, n_y), dtype=np.float)  
-        expanded_matrix[:, :, :data.shape[2], :data.shape[3]] = data  
-        # split image into 4*10 patches and concatenate them
-        # 切分图像为4*10的子图像，并拼接
-        sub_matrices = []
-        for row_blocks in np.split(expanded_matrix, int(n_x / block_size), axis=2):   # 2 rows
-            for block in np.split(row_blocks, int(n_y / block_size), axis=3):       # 2 cols  
-                sub_matrices.append(block)
-        return np.concatenate(sub_matrices, axis=0)
-
     def preprocess_data(self, data):
         # normalize data
         s = data.shape[-1]
