@@ -1,0 +1,65 @@
+log_dir: "./experiments/cylinder_re3900_UNet"
+data:
+    dataset: "cylinder flow re3900"
+    data_dir: "./data/re3900/velocity_high_res.npy"
+    sample_data_dir: "./data/re3900/velocity_low_res.npy"
+    stat_path: "./train_ddpm/experiments/cylinder_re3900_UNet/cylinder_re3900.npz"
+    image_size: 256
+    channels: 3
+    logit_transform: false
+    uniform_dequantization: false
+    gaussian_dequantization: false
+    random_flip: false
+    rescaled: false
+    num_workers: 4
+    data_kw: ''
+    smoothing: False
+    blur_method: "nearest"
+    blur_scale: 8
+    smoothing_scale: 5
+
+
+model:
+    name: "Diffusion_Re3900"
+    type: "simple"
+    in_channels: 3
+    out_ch: 3
+    ch: 64
+    ch_mult: [1, 1, 1, 2]
+    num_res_blocks: 1
+    attn_resolutions: [16, ]
+    dropout: 0.1
+    var_type: fixedlarge
+    ema_rate: 0.9999
+    ema: True
+    resamp_with_conv: True
+    ckpt_path: "./train_ddpm/experiments/cylinder_re3900_UNet/logs/ckpt_84600.pth"
+
+diffusion:
+    beta_schedule: linear
+    beta_start: 0.0001
+    beta_end: 0.02
+    num_diffusion_timesteps: 1000 # Might need to be changed to 500 later to match SDEdit
+
+training:
+    batch_size: 4
+    n_epochs: 100 # 300 epoch for about 12 hours
+    n_iters: 200000
+    snapshot_freq: 10000
+    validation_freq: 2000
+
+sampling:
+    batch_size: 1 # keep this to be 1, it breaks into [40 sub_graph] from [1 time-step cylinder slice], so real batch size is 40
+    last_only: True
+    lambda_: 0.
+    dump_arr: True
+    log_loss: True
+
+optim:
+    weight_decay: 0.000
+    optimizer: "Adam"
+    lr: 0.0001
+    beta1: 0.9
+    amsgrad: false
+    eps: 0.00000001
+    grad_clip: 1.0

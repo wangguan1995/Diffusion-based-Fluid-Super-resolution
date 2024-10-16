@@ -308,7 +308,7 @@ class Model(nn.Module):
                                         padding_mode='circular')
 
     def forward(self, x, t):
-        assert x.shape[2] == x.shape[3] == self.resolution
+        # assert x.shape[2] == x.shape[3] == self.resolution
 
         # timestep embedding
         temb = get_timestep_embedding(t, self.ch)
@@ -609,7 +609,7 @@ class ConditionalModel(nn.Module):
 
     def forward(self, x, t, dx=None):
         # dx is the physical gradient, working as context embedding
-        assert x.shape[2] == x.shape[3] == self.resolution
+        # assert x.shape[2] == x.shape[3] == self.resolution
 
         # timestep embedding
         temb = get_timestep_embedding(t, self.ch)

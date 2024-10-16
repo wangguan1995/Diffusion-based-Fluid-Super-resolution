@@ -1,13 +1,24 @@
 import torch
 
 
-def compute_alpha(beta, t):
+def compute_alpha_nchwd(beta, t):
+    beta = torch.cat([torch.zeros(1).to(beta.device), beta], dim=0)
+    a = (1 - beta).cumprod(dim=0).index_select(0, t + 1).view(-1, 1, 1, 1, 1)
+    return a
+
+def compute_alpha_ncwd(beta, t):
     beta = torch.cat([torch.zeros(1).to(beta.device), beta], dim=0)
     a = (1 - beta).cumprod(dim=0).index_select(0, t + 1).view(-1, 1, 1, 1)
     return a
 
 
 def ddim_steps(x, seq, model, b, **kwargs):
+    if x.dim() == 5:
+        compute_alpha = compute_alpha_nchwd
+    elif x.dim() == 4:
+        compute_alpha = compute_alpha_ncwd
+    else:
+        raise NotImplementedError
     n = x.size(0)
     seq_next = [-1] + list(seq[:-1])
     x0_preds = []
@@ -54,6 +65,12 @@ def ddim_steps(x, seq, model, b, **kwargs):
 
 
 def ddpm_steps(x, seq, model, b,  **kwargs):
+    if x.dim() == 5:
+        compute_alpha = compute_alpha_nchwd
+    elif x.dim() == 4:
+        compute_alpha = compute_alpha_ncwd
+    else:
+        raise NotImplementedError
     n = x.size(0)
     seq_next = [-1] + list(seq[:-1])
     xs = [x]
@@ -106,6 +123,12 @@ def ddpm_steps(x, seq, model, b,  **kwargs):
 
 
 def guided_ddpm_steps(x, seq, model, b,  **kwargs):
+    if x.dim() == 5:
+        compute_alpha = compute_alpha_nchwd
+    elif x.dim() == 4:
+        compute_alpha = compute_alpha_ncwd
+    else:
+        raise NotImplementedError
     n = x.size(0)
     seq_next = [-1] + list(seq[:-1])
     xs = [x]

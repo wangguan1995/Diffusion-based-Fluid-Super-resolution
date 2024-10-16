@@ -26,13 +26,6 @@ def parse_args_and_config():
         "--exp", type=str, default="exp", help="Path for saving running related data."
     )
     parser.add_argument(
-        "--doc",
-        type=str,
-        required=True,
-        help="A string for documentation purpose. "
-        "Will be the name of the log folder.",
-    )
-    parser.add_argument(
         "--comment", type=str, default="", help="A string for experiment comment"
     )
     parser.add_argument(
@@ -42,6 +35,7 @@ def parse_args_and_config():
         help="Verbose level: info | debug | warning | critical",
     )
     parser.add_argument("--test", action="store_true", help="Whether to test the model")
+    parser.add_argument("--reconstruct", action="store_true", help="Whether to reconstruct the physic fields")
     parser.add_argument(
         "--sample",
         action="store_true",
@@ -92,14 +86,14 @@ def parse_args_and_config():
     parser.add_argument('-channels', dest='mode', default='3', help="Select Mode for model prediction: 1c, 3c")
 
     args = parser.parse_args()
-    args.log_path = os.path.join(args.exp, "logs", args.doc)
+    args.log_path = os.path.join(args.exp, "logs")
 
     # parse config file
     with open(os.path.join("configs", args.config), "r") as f:
         config = yaml.safe_load(f)
     new_config = dict2namespace(config)
 
-    tb_path = os.path.join(args.exp, "tensorboard", args.doc)
+    tb_path = os.path.join(args.exp, "tensorboard")
 
     if not args.test and not args.sample:
         if not args.resume_training:
@@ -184,6 +178,7 @@ def parse_args_and_config():
                     else:
                         print("Output image folder exists. Program halted.")
                         sys.exit(0)
+    args.logger=logger
 
     # add device
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -219,13 +214,19 @@ def main():
     logging.info("Exp comment = {}".format(args.comment))
 
     try:
-        runner = ConditionalDiffusion(args, config)
-        # runner = Diffusion(args, config)
+        # runner = ConditionalDiffusion(args, config)
+        runner = Diffusion(args, config)
         if args.sample:
+            print("Sampling images...")
             runner.sample()
         elif args.test:
+            print("Testing model...")
             runner.test()
+        elif args.reconstruct:
+            print("Reconstruct model...")
+            runner.reconstruct()
         else:
+            print("Training model...")
             runner.train()
     except Exception:
         logging.error(traceback.format_exc())
@@ -233,5 +234,8 @@ def main():
     return 0
 
 
+
+# python main.py --config kmflow_re1000_rs256.yml --seed 1234 --sample_step 1 --t 240 --r 30
+# python main.py --config cylinder_re3900.yml --exp ./experiments/re3900/ --doc ./weights/re3900/ --ni
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

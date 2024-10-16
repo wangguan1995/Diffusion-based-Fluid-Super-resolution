@@ -1,0 +1,12 @@
+torch==2.0.0
+torchvision==0.15.1
+TensorBoard==2.11
+numpy==1.22
+tqdm==4.59
+einops==0.4.1
+matplotlib==3.6.2
+pyyaml
+tensorboardX
+timm
+diffusers
+accelerate

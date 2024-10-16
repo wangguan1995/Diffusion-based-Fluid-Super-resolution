@@ -11,16 +11,18 @@ import torch.utils.tensorboard as tb
 import copy
 
 from runners.rs256_guided_diffusion import Diffusion
+from runners.rs256_guided_diffusion_re3900 import Diffusion_Re3900
 
 def parse_args_and_config():
     parser = argparse.ArgumentParser(description=globals()['__doc__'])
     parser.add_argument('--config', type=str, required=True, help='Path to the config file')
     parser.add_argument('--seed', type=int, default=1234, help='Random seed')
-    parser.add_argument('--repeat_run', type=int, default=1, help='Repeat run')
     parser.add_argument('--sample_step', type=int, default=1, help='Total sampling steps')
     parser.add_argument('--t', type=int, default=400, help='Sampling noise scale')
     parser.add_argument('--r', dest='reverse_steps', type=int, default=20, help='Revserse steps')
     parser.add_argument('--comment', type=str, default='', help='Comment')
+    parser.add_argument('--log_dir', type=str, default='', help='log_dir')
+    parser.add_argument('--ckpt_path', type=str, default='', help='ckpt_path')
     args = parser.parse_args()
 
     # parse config file
@@ -48,7 +50,8 @@ def parse_args_and_config():
         dir_name = 'pi_' + dir_name
     else:
         print('Not use physical gradient during sampling')
-
+    config.model.ckpt_path = args.ckpt_path
+    config.log_dir = args.log_dir
     log_dir = os.path.join(config.log_dir, dir_name)
     os.makedirs(log_dir, exist_ok=True)
     with open(os.path.join(log_dir, 'config.yml'), 'w') as outfile:
@@ -98,7 +101,13 @@ def main():
     print("<" * 80)
 
     try:
-        runner = Diffusion(args, config, logger, log_dir)
+        if hasattr(config.model, 'name'):
+            if config.model.name == 'Diffusion_Re3900':
+                runner = Diffusion_Re3900(args, config, logger, log_dir)
+            else:
+                raise NotImplementedError
+        else:
+            runner = Diffusion(args, config, logger, log_dir)
         runner.reconstruct()
 
     except Exception:

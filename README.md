@@ -30,12 +30,7 @@ This code has been tested on the following environment:
 
 ```
 python 3.8
-PyTorch 1.7 + CUDA 10.1 + torchvision 0.8.2
-TensorBoard 2.11
-Numpy 1.22
-tqdm 4.59
-einops 0.4.1
-matplotlib 3.6.2
+pip install -r requirements.txt
 ```
 
 Download the high res and low res data and save the data files to the subdirectory ``./data/``.
@@ -44,19 +39,34 @@ Download the high res and low res data and save the data files to the subdirecto
 More details about how to run the experiments are coming soon.
 -->
 
-<b>Step 1 - Model Training</b>
+<b>Step 1 - Training</b>
+
+- !!! You Need Fix: ``./configs/cylinder_re3900.yml`` and ``./train_ddpm/cylinder_re3900.yml``
+- !!! You Need Care:``./.npz``, training will generate one npz file, replace the old ``./data/velocity_stat.npz``
+
 
 In the subdirectory ``./train_ddpm/``, run:
 
-``
-bash train.sh
-``
 
-or 
+```
+# Re 3900 Cylinder Slice, velocity x
+python main.py --config cylinder_re3900_UNet.yml --exp ./experiments/cylinder_re3900_UNet/ --ni
 
-``
+# Re 3900 Cylinder, Slice,  Spatial Temperal Patches, velocity x ,UNet
+python main.py --config cylinder_re3900_st_UNet.yml --exp ./experiments/cylinder_re3900_st_UNet/ --ni
+
+# Re 1000 JHTDB Slice, velocity x
+python main.py --config jhtdb_re1000.yml --exp ./experiments/jhtdb_re1000/ --doc ./ --ni
+
+# Re 1000 JHTDB Slice Spatial Temperal Patches, velocity x
+python main.py --config jhtdb_re1000_spatial_temperal.yml --exp ./experiments/jhtdb_re1000/ --doc ./weights/jhtdb_re1000/ --ni
+
+# Re 1000 JHTDB Slice Spatial Temperal Patches, DIT model, velocity x
+python main.py --config jhtdb_re1000_st_dit.yml --exp ./experiments/jhtdb_re1000_dit/ --doc ./weights/jhtdb_re1000_dit/ --ni
+
+# Re 1000 2D turbulence
 python main.py --config ./km_re1000_rs256_conditional.yml --exp ./experiments/km256/ --doc ./weights/km256/ --ni
-``
+```
 
 The checkpoint of the trained model is by default saved at the following trajectory. You can atler the saving directory according to your need by changing the values of ``--exp`` and ``--doc``.
 
@@ -69,7 +79,7 @@ Note: If you prefer not to go through Step 1, we provide the following pretraine
 </ol>
 
 
-<b>Step 2 - Super-resolution</b>
+<b>Step 2 - Evaluating</b>
 
 Add the model checkpoint file (e.g., ``baseline_ckpt.pth``) from <b>Step 1</b> to the following directory.
 
@@ -79,9 +89,25 @@ Add the model checkpoint file (e.g., ``baseline_ckpt.pth``) from <b>Step 1</b> t
 
 In the main directory of this repo, run:
 
-``
-python main.py --config kmflow_re1000_rs256.yml --seed 1234 --sample_step 1 --t 240 --r 30
-``
+```
+# Re 3900 Cylinder Slice, velocity x
+python main.py --config cylinder_re3900_UNet_1.yml --seed 1234 --sample_step 1 --t 240 --r 30
+
+# Re 3900 Cylinder, Slice,  Spatial Temperal Patches, velocity x ,UNet
+python main.py --config cylinder_re3900_st_UNet.yml --seed 1234 --sample_step 1 --t 240 --r 30
+
+# Re 1000 JHTDB Slice, velocity x
+python main.py --config jhtdb_re1000.yml --seed 1234 --sample_step 3 --t 240 --r 30
+
+# Re 1000 JHTDB, Slice, Spatial Temperal Patches, velocity x
+python main.py --config jhtdb_re1000_spatial_temperal.yml --seed 1234 --sample_step 3 --t 240 --r 30
+
+# Re 1000 JHTDB, Slice, Spatial Temperal Patches, DIT model, velocity x
+python main.py --config jhtdb_re1000_st_dit.yml --seed 1234 --sample_step 3 --t 240 --r 30
+
+# Re 1000 2D turbulence
+python main.py --config kmflow_re1000_rs256_sparse_recons.yml --seed 1234 --sample_step 1 --t 240 --r 30
+```
 
 
 ## References
